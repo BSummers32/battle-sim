@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Shield, Map as MapIcon, Users, Brain, Eye, Skull, Activity, Scroll, Sword, ChevronDown, ChevronUp, Info } from 'lucide-react';
 import { initializeBattle, generateArmyData, resolveTurn } from './gemini';
-import './game.css'; // Imports your styles
+import './game.css'; 
 
 // --- SUB-COMPONENTS ---
 
 const UnitDropdown = ({ unit }) => {
   const [isOpen, setIsOpen] = useState(false);
   return (
-    <div className="glass-panel rounded mb-2 overflow-hidden">
+    <div className="glass-panel rounded mb-2 overflow-hidden border border-slate-700/50">
       <button 
         onClick={() => setIsOpen(!isOpen)}
         className="w-full flex justify-between items-center p-3 hover:bg-white/5 transition-colors text-left"
@@ -22,12 +22,24 @@ const UnitDropdown = ({ unit }) => {
           {isOpen ? <ChevronUp size={16} className="text-amber-500"/> : <ChevronDown size={16} className="text-slate-500"/>}
         </div>
       </button>
+      
+      {/* Dropdown Content */}
       {isOpen && (
-        <div className="p-3 bg-black/40 text-xs border-t border-slate-800 text-slate-400 space-y-2">
-          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1">
-            <span className="text-emerald-500 font-bold">Str:</span><span>{unit.str || 'N/A'}</span>
-            <span className="text-red-500 font-bold">Wk:</span><span>{unit.weak || 'N/A'}</span>
+        <div className="p-4 bg-black/40 text-xs border-t border-slate-800 text-slate-300 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+          
+          <div className="grid grid-cols-[60px_1fr] gap-2">
+            <span className="text-emerald-500 font-bold uppercase tracking-wider text-[10px] self-center">Strength</span>
+            <span className="leading-relaxed">{unit.str || 'N/A'}</span>
+            
+            <span className="text-red-500 font-bold uppercase tracking-wider text-[10px] self-center">Weakness</span>
+            <span className="leading-relaxed">{unit.weak || 'N/A'}</span>
           </div>
+
+          <div className="pt-2 border-t border-slate-700/50">
+            <span className="text-blue-400 font-bold uppercase tracking-wider text-[10px] block mb-1">Combat Loadout</span>
+            <span className="leading-relaxed text-slate-400 italic block">{unit.equip || 'Standard Issue'}</span>
+          </div>
+
         </div>
       )}
     </div>

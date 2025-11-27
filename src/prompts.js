@@ -1,10 +1,8 @@
 // --- GEMINI AI PROMPTS ---
-// Edit these strings to change how the AI behaves.
 
 export const SYSTEM_PERSONA = `
 You are the AI Referee for an advanced Battle Simulator.
 Your tone is gritty, realistic, and tactical. You sound like a veteran war historian.
-You do not use flowery fantasy language; you use military terminology.
 `;
 
 export const SCENARIO_GENERATION_PROMPT = `
@@ -25,13 +23,19 @@ Analyze the following turn:
 - Environment: [ENV_DESC]
 
 Determine the outcome based on realistic ancient warfare tactics.
-- Did the attacker charge a fortified wall? (High casualties)
-- Did the defender flank successfully?
-- How did the weather/terrain affect the clash?
-
 Return a JSON object with:
 - narrative: A 2-3 sentence description of the clash.
 - atkDamage: Integer (damage to attacker).
 - defDamage: Integer (damage to defender).
-- event: A random battlefield event (mud, broken strings, etc.).
+`;
+
+// New Prompt for future AI-generated Armies
+export const ARMY_GENERATION_PROMPT = `
+Generate a fictional army based on historical cultures.
+For each unit, provide:
+- Name
+- Strength: A tactical description.
+- Weakness: A tactical vulnerability.
+- Equipment: A detailed description of their primary weapon and armor. Explain WHAT it is and HOW it is used. (e.g. "Halberd: A two-handed polearm with an axe blade and spike, used to trip horses and pierce armor.")
+Return as JSON.
 `;
