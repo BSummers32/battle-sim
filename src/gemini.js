@@ -18,25 +18,46 @@ const cleanJSON = (text) => {
   return match ? JSON.parse(match[0]) : null;
 };
 
+// --- DATA LISTS (For Offline/Fallback Generation) ---
+const BATTLE_NAMES_A = ['The Battle of', 'The Siege of', 'The Skirmish at', 'The Massacre at'];
+const BATTLE_NAMES_B = ['Broken', 'Weeping', 'Thunder', 'Silent', 'Burning', 'Frozen', 'Shadow', 'Iron'];
+const BATTLE_NAMES_C = ['Ridge', 'Valley', 'Keep', 'River', 'Pass', 'Fields', 'Gate', 'Wall'];
+
+const ENVIRONMENTS = [
+  { type: 'Fortress Siege', desc: 'A massive stone stronghold looming atop a jagged hill. The air smells of sulfur and unwashed stone.', defenseBonus: 0.4 },
+  { type: 'Narrow Canyon', desc: 'A claustrophobic pass with towering red cliffs on both sides. The wind howls through the gap.', defenseBonus: 0.2 },
+  { type: 'Open Field', desc: 'Vast, rolling grassy plains stretching to the horizon. Nowhere to hide.', defenseBonus: 0.0 },
+  { type: 'River Bridge', desc: 'A fast-flowing, icy river cuts the battlefield in half, crossed only by a single stone bridge.', defenseBonus: 0.5 },
+  { type: 'Foggy Marsh', desc: 'A treacherous wetland shrouded in thick, unnatural fog. Visibility is near zero.', defenseBonus: 0.1 }
+];
+
+const WEATHER = ['Clear Skies', 'Heavy Rain', 'Thick Fog', 'Scorching Sun', 'Snowstorm'];
+
+// --- HELPERS ---
+const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
 // --- MAIN FUNCTIONS ---
 
 export const initializeBattle = async () => {
-  if (!API_KEY) return fallbackScenario();
-
-  try {
-    const result = await model.generateContent(SCENARIO_GENERATION_PROMPT);
-    const response = await result.response;
-    const data = cleanJSON(response.text());
-    return {
-      name: data.name,
-      env: { type: data.terrain, desc: data.description, defenseBonus: data.defenseBonus },
-      weather: data.weather,
-      day: 1
-    };
-  } catch (error) {
-    console.error("AI Error:", error);
-    return fallbackScenario();
+  // Try AI first
+  if (API_KEY) {
+    try {
+      const result = await model.generateContent(SCENARIO_GENERATION_PROMPT);
+      const response = await result.response;
+      const data = cleanJSON(response.text());
+      return {
+        name: data.name,
+        env: { type: data.terrain, desc: data.description, defenseBonus: data.defenseBonus },
+        weather: data.weather,
+        day: 1
+      };
+    } catch (error) {
+      console.warn("AI Init failed, using fallback generator.", error);
+    }
   }
+  // If no key or error, use robust fallback
+  return fallbackScenario();
 };
 
 export const generateArmyData = (isPlayer) => {
@@ -66,45 +87,43 @@ export const generateArmyData = (isPlayer) => {
 };
 
 export const resolveTurn = async (atkMove, defMove, scenario) => {
-  if (!API_KEY) return fallbackTurn(atkMove, defMove);
+  if (API_KEY) {
+    try {
+      let prompt = BATTLE_RESOLUTION_PROMPT
+        .replace("[ATK_MOVE]", atkMove)
+        .replace("[DEF_MOVE]", defMove)
+        .replace("[ENV_DESC]", scenario.env.desc);
 
-  try {
-    let prompt = BATTLE_RESOLUTION_PROMPT
-      .replace("[ATK_MOVE]", atkMove)
-      .replace("[DEF_MOVE]", defMove)
-      .replace("[ENV_DESC]", scenario.env.desc);
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const data = cleanJSON(response.text());
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const data = cleanJSON(response.text());
-
-    return {
-      narrative: data.narrative,
-      atkDmg: data.atkDamage || 50,
-      defDmg: data.defDamage || 50
-    };
-  } catch (error) {
-    console.error("AI Resolution Error:", error);
-    return fallbackTurn(atkMove, defMove);
+      return {
+        narrative: data.narrative,
+        atkDmg: data.atkDamage || 50,
+        defDmg: data.defDamage || 50
+      };
+    } catch (error) {
+      console.warn("AI Turn Resolution failed, using fallback.", error);
+    }
   }
+  return fallbackTurn(atkMove, defMove);
 };
 
-// --- NEW REPORT FUNCTION ---
 export const generateBattleReport = async (logs) => {
-  if (!API_KEY) return fallbackReport();
+  if (API_KEY) {
+    try {
+      const logText = logs.map(l => `${l.role}: ${l.text}`).join("\n");
+      const prompt = BATTLE_REPORT_PROMPT.replace("[BATTLE_LOGS]", logText);
 
-  try {
-    // Convert logs array to a string for the AI to read
-    const logText = logs.map(l => `${l.role}: ${l.text}`).join("\n");
-    const prompt = BATTLE_REPORT_PROMPT.replace("[BATTLE_LOGS]", logText);
-
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    return cleanJSON(response.text());
-  } catch (error) {
-    console.error("AI Report Error:", error);
-    return fallbackReport();
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      return cleanJSON(response.text());
+    } catch (error) {
+      console.error("AI Report Error:", error);
+    }
   }
+  return fallbackReport();
 };
 
 
@@ -128,26 +147,30 @@ const FALLBACK_DATA = {
   }
 };
 
-const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-
-const fallbackScenario = () => ({
-  name: "Training Simulation",
-  env: { type: "Practice Field", desc: "A standard training ground.", defenseBonus: 0.0 },
-  weather: "Clear",
-  day: 1
-});
+// UPGRADED: Now generates a real scenario name/env instead of "Training Simulation"
+const fallbackScenario = () => {
+    const env = rand(ENVIRONMENTS);
+    const weather = rand(WEATHER);
+    const name = `${rand(BATTLE_NAMES_A)} ${rand(BATTLE_NAMES_B)} ${rand(BATTLE_NAMES_C)}`;
+    
+    return {
+      name: name,
+      env: env,
+      weather: weather,
+      day: 1
+    };
+};
 
 const fallbackTurn = (atk, def) => ({
-  narrative: `Tactical engagement underway. Attackers attempted: "${atk}". Defenders responded with: "${def}".`,
-  atkDmg: Math.floor(Math.random() * 100),
-  defDmg: Math.floor(Math.random() * 100)
+  narrative: `Tactical engagement underway. Attackers attempted: "${atk}". Defenders responded with: "${def}". The clash was chaotic.`,
+  atkDmg: Math.floor(Math.random() * 100) + 20,
+  defDmg: Math.floor(Math.random() * 100) + 20
 });
 
 const fallbackReport = () => ({
-  winner: "Unknown",
-  tacticalAnalysis: "Communication with HQ lost. Battle concluded.",
-  strengths: ["Data corrupted"],
-  mistakes: ["Data corrupted"],
-  casualties: "Unknown"
+  winner: "Undetermined",
+  tacticalAnalysis: "Communication with HQ lost. Battle concluded locally.",
+  strengths: ["Unit Cohesion", "Rapid Deployment"],
+  mistakes: ["Communications Failure", "Limited Intel"],
+  casualties: "Estimated 30%"
 });
