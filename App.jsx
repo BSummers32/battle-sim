@@ -1,23 +1,74 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Shield, Map as MapIcon, Users, Brain, Eye, Skull, Activity, Scroll, Sword } from 'lucide-react';
+import { Shield, Map as MapIcon, Users, Brain, Eye, Skull, Activity, Scroll, Sword, ChevronDown, ChevronUp, Info } from 'lucide-react';
 
 // --- DATA & GENERATORS ---
 
-const CULTURES = [
-  { name: 'Viking', units: ['Berserkers', 'Shield Maidens', 'Longbowmen'], traits: ['Fierce', 'Naval Expert'] },
-  { name: 'Samurai', units: ['Katana Samurai', 'Yumi Archers', 'Ashigaru Spears'], traits: ['Disciplined', 'Honorable'] },
-  { name: 'Roman', units: ['Legionaries', 'Praetorians', 'Ballistae'], traits: ['Formations', 'Engineering'] },
-  { name: 'Mongolian', units: ['Horse Archers', 'Lancers', 'Heavy Cav'], traits: ['Mobile', 'Hit & Run'] },
-  { name: 'Medieval', units: ['Knights', 'Crossbowmen', 'Men-at-Arms'], traits: ['Armored', 'Religious'] },
-  { name: 'Spartan', units: ['Hoplites', 'Javelin Throwers', 'Helots'], traits: ['Phalanx', 'Unbreakable'] }
-];
+const UNIT_DATA = {
+  'Viking': {
+    infantry: { name: 'Berserkers', str: 'Shock damage, Fear induction', weak: 'No armor, Ranged attacks', equip: 'Twin Bearded Axes (High severing capability), Bear Pelts' },
+    ranged: { name: 'Longbowmen', str: 'Range, Indirect fire', weak: 'Melee combat', equip: 'Yew Longbows, Seax Daggers' },
+    special: { name: 'Shield Maidens', str: 'Defensive wall, Morale boost', weak: 'Heavy cavalry', equip: 'Round Linden Shields, Spears' }
+  },
+  'Samurai': {
+    infantry: { name: 'Katana Samurai', str: 'Melee duelists, Speed', weak: 'Arrow fire', equip: 'Katana (Razor edge), Lacquered Armor' },
+    ranged: { name: 'Yumi Archers', str: 'Accuracy, Armor piercing', weak: 'Sustained melee', equip: 'Asymmetric Yumi Bows, Tachi' },
+    special: { name: 'Ashigaru Spears', str: 'Anti-cavalry, Cost effective', weak: 'Flanking', equip: 'Yari Spears, Jingasa Helmets' }
+  },
+  'Roman': {
+    infantry: { name: 'Legionaries', str: 'Formation fighting, Discipline', weak: 'Guerrilla tactics', equip: 'Gladius (Short sword), Scutum (Tower shield)' },
+    ranged: { name: 'Velites', str: 'Mobility, Harassment', weak: 'Sustained combat', equip: 'Light Javelins, Wolf Pelts' },
+    special: { name: 'Praetorians', str: 'Elite defense, heavy armor', weak: 'Slow movement', equip: 'Segmented Plate Armor, Hasta' }
+  },
+  'Mongolian': {
+    infantry: { name: 'Steppe Lancers', str: 'Charge impact', weak: 'Phalanx formations', equip: 'Heavy Lance, Lamellar Armor' },
+    ranged: { name: 'Horse Archers', str: 'Extreme mobility, Hit & Run', weak: 'Enclosed spaces', equip: 'Composite Recurve Bow, Light Silk Armor' },
+    special: { name: 'Kheshig', str: 'Elite bodyguards, Versatile', weak: 'High cost', equip: 'Sabre, Steel Plate' }
+  },
+  'Medieval': {
+    infantry: { name: 'Men-at-Arms', str: 'Versatile, Durable', weak: 'Armor piercing bolts', equip: 'Poleaxe, Chainmail Hauberk' },
+    ranged: { name: 'Crossbowmen', str: 'High penetration', weak: 'Slow reload rate', equip: 'Heavy Crossbow, Pavese Shield' },
+    special: { name: 'Knights', str: 'Devastating charge', weak: 'Mud/Terrain', equip: 'Warhorse, Lance, Full Plate' }
+  },
+  'Spartan': {
+    infantry: { name: 'Hoplites', str: 'Unbreakable frontline', weak: 'Flanking, Mobility', equip: 'Dory Spear, Aspis Shield (Bronze)' },
+    ranged: { name: 'Peltasts', str: 'Skirmishing', weak: 'Heavy Infantry', equip: 'Javelins, Wicker Shield' },
+    special: { name: 'Royal Guard', str: 'Fanatical morale', weak: 'Numbers', equip: 'Xiphos Sword, Crimson Cloak' }
+  }
+};
+
+const ARMY_PREFIXES = ['Iron', 'Crimson', 'Golden', 'Obsidian', 'Silent', 'Eternal', 'Savage', 'Imperial'];
+const ARMY_SUFFIXES = ['Vanguard', 'Legion', 'Horde', 'Eclipse', 'Sentinels', 'Reavers', 'Phalanx', 'Dynasty'];
+
+const BATTLE_NAMES_A = ['The Battle of', 'The Siege of', 'The Skirmish at', 'The Massacre at'];
+const BATTLE_NAMES_B = ['Broken', 'Weeping', 'Thunder', 'Silent', 'Burning', 'Frozen', 'Shadow'];
+const BATTLE_NAMES_C = ['Ridge', 'Valley', 'Keep', 'River', 'Pass', 'Fields', 'Gate'];
 
 const ENVIRONMENTS = [
-  { type: 'Fortress Siege', desc: 'A massive stone stronghold atop a hill.', defenseBonus: 0.4 },
-  { type: 'Narrow Canyon', desc: 'A tight pass with high cliffs on both sides.', defenseBonus: 0.2 },
-  { type: 'Open Field', desc: 'Grassy plains with little cover.', defenseBonus: 0.0 },
-  { type: 'River Bridge', desc: 'A fast-flowing river with a single stone bridge.', defenseBonus: 0.5 },
-  { type: 'Foggy Marsh', desc: 'Thick mud and low visibility.', defenseBonus: 0.1 }
+  { 
+    type: 'Fortress Siege', 
+    desc: 'The objective is a massive stone stronghold looming atop a jagged hill. The air smells of sulfur and unwashed stone. Defenders have a commanding view, while attackers must navigate a steep, coverless ascent under constant watch.', 
+    defenseBonus: 0.4 
+  },
+  { 
+    type: 'Narrow Canyon', 
+    desc: 'A claustrophobic pass with towering red cliffs on both sides that blot out the sun. The wind howls through the gap, masking the sound of troop movements. There is no room for wide formations here; it is a meat grinder waiting to happen.', 
+    defenseBonus: 0.2 
+  },
+  { 
+    type: 'Open Field', 
+    desc: 'Vast, rolling grassy plains stretching to the horizon. The ground is firm and dry, perfect for cavalry charges and large-scale maneuvers. There is nowhere to hide; this will be a contest of raw strength and speed.', 
+    defenseBonus: 0.0 
+  },
+  { 
+    type: 'River Bridge', 
+    desc: 'A fast-flowing, icy river cuts the battlefield in half, crossed only by a single, ancient stone bridge. The water is too deep to ford. The bottleneck at the bridge will be the focal point of the entire engagement.', 
+    defenseBonus: 0.5 
+  },
+  { 
+    type: 'Foggy Marsh', 
+    desc: 'A treacherous wetland shrouded in thick, unnatural fog. Visibility is less than twenty paces. The ground sucks at boots and hooves alike, slowing movement to a crawl. Screams echo strangely here, making it hard to pinpoint the enemy.', 
+    defenseBonus: 0.1 
+  }
 ];
 
 const WEATHER = ['Clear Skies', 'Heavy Rain', 'Thick Fog', 'Scorching Sun', 'Snowstorm'];
@@ -27,9 +78,14 @@ const WEATHER = ['Clear Skies', 'Heavy Rain', 'Thick Fog', 'Scorching Sun', 'Sno
 const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
+const generateName = () => `${rand(ARMY_PREFIXES)} ${rand(ARMY_SUFFIXES)}`;
+const generateBattleName = () => `${rand(BATTLE_NAMES_A)} ${rand(BATTLE_NAMES_B)} ${rand(BATTLE_NAMES_C)}`;
+
 const generateArmy = (isPlayer) => {
-  const culture = rand(CULTURES);
-  const culture2 = rand(CULTURES); // Mixed culture
+  const cultureKey = rand(Object.keys(UNIT_DATA));
+  const cultureData = UNIT_DATA[cultureKey];
+  const cultureKey2 = rand(Object.keys(UNIT_DATA)); // Mixed culture
+  const cultureData2 = UNIT_DATA[cultureKey2];
   
   const size = randInt(2000, 8000);
   const morale = 100;
@@ -37,14 +93,15 @@ const generateArmy = (isPlayer) => {
   
   // Generate Unit Composition
   const units = [
-    { name: `${culture.name} ${culture.units[0]}`, count: Math.floor(size * 0.4), type: 'Infantry' },
-    { name: `${culture2.name} ${culture2.units[1]}`, count: Math.floor(size * 0.3), type: 'Ranged' },
-    { name: `${culture.name} ${culture.units[2]}`, count: Math.floor(size * 0.2), type: 'Special' },
-    { name: 'Siege Engines', count: randInt(0, 5), type: 'Siege' }
+    { ...cultureData.infantry, count: Math.floor(size * 0.4), type: 'Infantry', culture: cultureKey },
+    { ...cultureData2.ranged, count: Math.floor(size * 0.3), type: 'Ranged', culture: cultureKey2 },
+    { ...cultureData.special, count: Math.floor(size * 0.2), type: 'Special', culture: cultureKey },
+    { name: 'Siege Engines', count: randInt(0, 5), type: 'Siege', str: 'Wall breaking', weak: 'Melee', equip: 'Trebuchets/Rams' }
   ];
 
   return {
-    culture: `${culture.name}-${culture2.name} Alliance`,
+    name: generateName(),
+    culture: `${cultureKey}-${cultureKey2}`,
     totalSize: size,
     units,
     morale,
@@ -56,11 +113,50 @@ const generateArmy = (isPlayer) => {
 
 const getVagueIntel = (army) => {
   const sizeDesc = army.totalSize > 6000 ? "a massive horde" : army.totalSize > 4000 ? "a formidable force" : "a moderate battalion";
-  const siegeDesc = army.units.find(u => u.type === 'Siege' && u.count > 0) ? "siege engines visible" : "no visible heavy machinery";
+  const siegeDesc = army.units.find(u => u.type === 'Siege' && u.count > 0) ? "heavy siege engines visible" : "no visible heavy machinery";
   return {
-    desc: `Scouts report ${sizeDesc} of the ${army.culture}. We spotted ${siegeDesc}.`,
+    desc: `Scouts report ${sizeDesc} known as "${army.name}". We spotted ${siegeDesc}. They appear to be a mix of ${army.culture} styles.`,
     units: army.units.map(u => ({ name: u.name, est: "Unknown numbers", type: u.type }))
   };
+};
+
+// --- SUB-COMPONENTS ---
+
+const UnitDropdown = ({ unit }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="bg-black/20 rounded mb-2 overflow-hidden border border-slate-700/50">
+      <button 
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex justify-between items-center p-3 hover:bg-white/5 transition-colors text-left"
+      >
+        <div className="flex flex-col">
+          <span className="text-slate-200 font-bold text-sm">{unit.name}</span>
+          <span className="text-xs text-slate-500">{unit.culture ? unit.culture + ' ' : ''}{unit.type}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-amber-200 text-sm">{unit.count}</span>
+          {isOpen ? <ChevronUp size={16} className="text-amber-500"/> : <ChevronDown size={16} className="text-slate-500"/>}
+        </div>
+      </button>
+      
+      {isOpen && (
+        <div className="p-3 bg-black/40 text-xs border-t border-slate-800 text-slate-400 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1">
+            <span className="text-emerald-500 font-bold">Strengths:</span>
+            <span>{unit.str || 'N/A'}</span>
+            
+            <span className="text-red-500 font-bold">Weakness:</span>
+            <span>{unit.weak || 'N/A'}</span>
+            
+            <span className="text-blue-400 font-bold">Gear:</span>
+            <span>{unit.equip || 'Standard Issue'}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 // --- GAME LOGIC ENGINE ---
@@ -72,6 +168,7 @@ export default function BattleSimulator() {
   const [activePlayer, setActivePlayer] = useState('attacker'); 
   
   const [scenario, setScenario] = useState(null);
+  const [battleName, setBattleName] = useState('');
   const [attacker, setAttacker] = useState(null);
   const [defender, setDefender] = useState(null);
   const [logs, setLogs] = useState([]);
@@ -93,6 +190,8 @@ export default function BattleSimulator() {
     setMode(selectedMode);
     const env = rand(ENVIRONMENTS);
     const weather = rand(WEATHER);
+    const bName = generateBattleName();
+    setBattleName(bName);
     
     const p1Role = Math.random() > 0.5 ? 'Attacker' : 'Defender';
     const isP1Attacker = p1Role === 'Attacker';
@@ -103,7 +202,7 @@ export default function BattleSimulator() {
     setScenario({
       env,
       weather,
-      terrainFeature: `The terrain is ${env.desc.toLowerCase()}`,
+      terrainFeature: `The terrain is ${env.type.toLowerCase()}`,
       day: 1
     });
 
@@ -112,7 +211,10 @@ export default function BattleSimulator() {
     
     setLogs([{
       role: 'system',
-      text: `WAR DECLARED. Location: ${env.type}. Weather: ${weather}.`
+      text: `OPERATION: "${bName.toUpperCase()}" INITIATED.`
+    }, {
+      role: 'system',
+      text: `Location: ${env.type}. Weather: ${weather}.`
     }, {
       role: 'system',
       text: `You have been assigned the role of ${p1Role.toUpperCase()}.`
@@ -228,20 +330,18 @@ export default function BattleSimulator() {
       return (
         <div className="bg-white/5 border border-white/10 p-4 rounded-xl mb-4 backdrop-blur-md shadow-lg transition-all hover:bg-white/10">
           <h3 className="text-xl font-serif font-bold text-amber-400 mb-2 flex items-center gap-2">
-            <Shield size={18} className="text-amber-500"/> Your Army ({army.culture})
+            <Shield size={18} className="text-amber-500"/> {army.name}
           </h3>
-          <div className="grid grid-cols-2 gap-2 text-sm text-slate-300">
+          <p className="text-xs text-slate-500 mb-4">{army.culture} Alliance</p>
+          <div className="grid grid-cols-2 gap-2 text-sm text-slate-300 mb-4">
             <p className="flex justify-between"><span>Troops:</span> <span className="text-white font-mono">{army.totalSize}</span></p>
             <p className="flex justify-between"><span>Morale:</span> <span className="text-white font-mono">{army.morale}%</span></p>
             <p className="flex justify-between"><span>Supplies:</span> <span className="text-white font-mono">{army.supplies}%</span></p>
           </div>
-          <div className="mt-4 space-y-2">
-            <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Unit Breakdown</p>
+          <div className="space-y-1">
+            <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-2">Unit Breakdown (Click for Intel)</p>
             {army.units.map((u, i) => (
-              <div key={i} className="flex justify-between text-sm items-center bg-black/20 p-2 rounded">
-                <span className="text-slate-300">{u.name}</span>
-                <span className="font-mono text-amber-200">{u.count}</span>
-              </div>
+              <UnitDropdown key={i} unit={u} />
             ))}
           </div>
         </div>
@@ -319,16 +419,16 @@ export default function BattleSimulator() {
   const isHiddenState = mode === 'PvP' && phase === 'battle' && !logs[logs.length-1]?.text.includes('Resolution');
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans flex flex-col md:flex-row overflow-hidden relative">
+    <div className="h-screen w-screen bg-slate-950 text-slate-200 font-sans flex flex-col md:flex-row overflow-hidden relative">
       {/* Background Texture */}
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black -z-10"></div>
       
       {/* LEFT PANEL: BATTLE LOG & TERMINAL */}
-      <div className="flex-1 flex flex-col h-screen p-4 md:p-6 border-r border-slate-800/50 bg-black/20 backdrop-blur-sm">
-        <header className="mb-6 border-b border-slate-800 pb-4 flex justify-between items-end">
+      <div className="flex-1 flex flex-col h-full border-r border-slate-800/50 bg-black/20 backdrop-blur-sm relative z-0">
+        <header className="p-4 md:p-6 mb-0 border-b border-slate-800 pb-4 flex justify-between items-end bg-slate-900/80">
           <div>
             <h2 className="text-2xl font-serif font-bold text-amber-500 flex items-center gap-3 tracking-wide">
-              <Activity size={24} className="text-amber-600"/> BATTLE LOG
+              <Activity size={24} className="text-amber-600"/> {battleName.toUpperCase()}
             </h2>
             <p className="text-xs text-slate-500 mt-1 font-mono uppercase tracking-widest">
               Day {scenario?.day} • {scenario?.env.type} • {scenario?.weather}
@@ -343,7 +443,7 @@ export default function BattleSimulator() {
         </header>
 
         {/* LOG FEED */}
-        <div className="flex-1 overflow-y-auto space-y-4 pr-2 mb-6 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+        <div className="flex-1 overflow-y-auto space-y-4 p-4 md:p-6 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
           {logs.map((log, idx) => (
             <div key={idx} className={`p-4 rounded-lg border-l-4 shadow-sm transition-all ${
               log.role === 'system' ? 'border-amber-600/50 bg-amber-950/10 text-amber-100/90' :
@@ -364,7 +464,7 @@ export default function BattleSimulator() {
 
         {/* INPUT AREA */}
         {phase === 'battle' && (
-          <div className="mt-auto relative z-20">
+          <div className="p-4 md:p-6 bg-slate-900/90 border-t border-slate-800">
             <div className={`bg-slate-900/80 border ${isHiddenState ? 'border-red-900/50' : 'border-slate-700'} p-1 rounded-xl shadow-2xl backdrop-blur-md`}>
               <div className="bg-black/40 rounded-lg p-4">
                 <label className="text-xs text-slate-500 uppercase mb-2 block font-bold tracking-wider flex justify-between">
@@ -402,8 +502,8 @@ export default function BattleSimulator() {
         )}
         
         {phase === 'report' && (
-           <div className="mt-auto bg-slate-800/80 p-8 rounded-xl text-center border border-slate-700 shadow-2xl backdrop-blur-md">
-             <h2 className="text-3xl text-white font-serif font-bold mb-4">Simulation Concluded</h2>
+           <div className="p-6 bg-slate-900 border-t border-slate-800 text-center">
+             <h2 className="text-2xl text-white font-serif font-bold mb-4">Simulation Concluded</h2>
              <button 
                 onClick={() => setPhase('menu')} 
                 className="bg-slate-200 text-black px-8 py-3 font-bold rounded hover:bg-white transition-colors uppercase tracking-widest"
@@ -414,55 +514,60 @@ export default function BattleSimulator() {
         )}
       </div>
 
-      {/* RIGHT PANEL: INTEL & STATS */}
-      <div className="w-full md:w-96 bg-black/40 p-6 border-l border-slate-800/50 overflow-y-auto backdrop-blur-sm">
-        <h2 className="text-xs font-bold text-slate-500 uppercase tracking-[0.2em] mb-6 border-b border-slate-800 pb-2">
-          Tactical Analysis
-        </h2>
+      {/* RIGHT PANEL: INTEL & STATS - FIXED INDEPENDENT SCROLL */}
+      <div className="w-full md:w-[450px] bg-black/40 border-l border-slate-800/50 backdrop-blur-sm flex flex-col h-full overflow-hidden">
         
-        {/* Environment Card */}
-        <div className="bg-slate-800/40 border border-slate-700/50 p-5 rounded-xl mb-6 shadow-lg">
-           <h3 className="text-lg font-serif font-bold text-blue-400 flex items-center gap-2 mb-2">
-             <MapIcon size={20}/> {scenario?.env.type}
-           </h3>
-           <p className="text-sm text-slate-400 italic mb-4 border-l-2 border-blue-500/30 pl-3">
-             {scenario?.env.desc}
-           </p>
-           <div className="flex gap-2 flex-wrap">
-             <span className="text-xs bg-slate-900/80 border border-slate-700 text-slate-300 px-3 py-1.5 rounded-full">
-               {scenario?.weather}
-             </span>
-             <span className="text-xs bg-slate-900/80 border border-slate-700 text-slate-300 px-3 py-1.5 rounded-full">
-               Def Bonus: <span className="text-blue-400">+{scenario?.env.defenseBonus * 100}%</span>
-             </span>
-           </div>
+        {/* Sticky Header for Right Panel */}
+        <div className="p-6 pb-2 bg-slate-950/90 z-10 border-b border-slate-800/50">
+           <h2 className="text-xs font-bold text-slate-500 uppercase tracking-[0.2em] mb-2 flex justify-between items-center">
+             <span>Tactical Analysis</span>
+             <Info size={14} className="text-slate-600"/>
+           </h2>
         </div>
 
-        {/* Armies */}
-        <div className="space-y-6">
-          {showAttackerStats ? renderIntel(attacker, activePlayer === 'attacker' || (mode === 'PvE' && attacker?.isPlayer)) : renderIntel(attacker, false)}
-          {showDefenderStats ? renderIntel(defender, activePlayer === 'defender' || (mode === 'PvE' && !attacker?.isPlayer)) : renderIntel(defender, false)}
-        </div>
+        {/* Scrollable Content Area */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+          
+          {/* Environment Card */}
+          <div className="bg-slate-800/40 border border-slate-700/50 p-5 rounded-xl shadow-lg">
+             <h3 className="text-lg font-serif font-bold text-blue-400 flex items-center gap-2 mb-2">
+               <MapIcon size={20}/> {scenario?.env.type}
+             </h3>
+             <p className="text-sm text-slate-400 italic mb-4 leading-relaxed border-l-2 border-blue-500/30 pl-3">
+               {scenario?.env.desc}
+             </p>
+             <div className="flex gap-2 flex-wrap">
+               <span className="text-xs bg-slate-900/80 border border-slate-700 text-slate-300 px-3 py-1.5 rounded-full">
+                 {scenario?.weather}
+               </span>
+               <span className="text-xs bg-slate-900/80 border border-slate-700 text-slate-300 px-3 py-1.5 rounded-full">
+                 Def Bonus: <span className="text-blue-400">+{scenario?.env.defenseBonus * 100}%</span>
+               </span>
+             </div>
+          </div>
 
-        {/* Help Text */}
-        <div className="mt-12 bg-amber-950/20 border border-amber-900/30 p-4 rounded-lg">
-          <p className="font-bold mb-2 text-amber-500 text-xs uppercase tracking-wider flex items-center gap-2">
-            <Scroll size={14}/> Field Manual
-          </p>
-          <ul className="text-xs text-slate-400 space-y-2 list-none">
-            <li className="flex gap-2">
-              <span className="text-amber-500">•</span>
-              <span>Use <strong>Commander: [Query]</strong> for free strategic advice.</span>
-            </li>
-            <li className="flex gap-2">
-              <span className="text-amber-500">•</span>
-              <span>Intel reports are estimates; fog of war applies.</span>
-            </li>
-            <li className="flex gap-2">
-              <span className="text-amber-500">•</span>
-              <span>Weather conditions affect ranged unit accuracy.</span>
-            </li>
-          </ul>
+          {/* Armies */}
+          <div className="space-y-6">
+            {showAttackerStats ? renderIntel(attacker, activePlayer === 'attacker' || (mode === 'PvE' && attacker?.isPlayer)) : renderIntel(attacker, false)}
+            {showDefenderStats ? renderIntel(defender, activePlayer === 'defender' || (mode === 'PvE' && !attacker?.isPlayer)) : renderIntel(defender, false)}
+          </div>
+
+          {/* Help Text */}
+          <div className="mt-8 bg-amber-950/20 border border-amber-900/30 p-4 rounded-lg">
+            <p className="font-bold mb-2 text-amber-500 text-xs uppercase tracking-wider flex items-center gap-2">
+              <Scroll size={14}/> Field Manual
+            </p>
+            <ul className="text-xs text-slate-400 space-y-2 list-none">
+              <li className="flex gap-2">
+                <span className="text-amber-500">•</span>
+                <span>Use <strong>Commander: [Query]</strong> for free strategic advice.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-amber-500">•</span>
+                <span>Intel reports are estimates; fog of war applies.</span>
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
 
