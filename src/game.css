@@ -1,5 +1,4 @@
 /* --- BATTLE SIMULATOR THEME: ANCIENT WAR ROOM --- */
-/* Most styles are handled via Tailwind classes in the JSX */
 
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Lora:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap');
 
@@ -12,6 +11,8 @@
 body {
   background-color: #E6DFCD;
   color: #292524; /* stone-800 */
+  margin: 0;
+  font-family: var(--font-serif);
 }
 
 /* Custom Scrollbar for the "Ancient" feel */

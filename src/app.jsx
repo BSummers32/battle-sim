@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createRoot } from 'react-dom/client';
 import { 
   Shield, Map as MapIcon, Users, Brain, Activity, 
   Sword, ChevronDown, ChevronUp, Copy, Play, 
@@ -7,230 +6,14 @@ import {
   MessageSquare, Skull, Target, Zap, Wind, Clock,
   Feather, Scroll, X
 } from 'lucide-react';
-import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, doc, onSnapshot, updateDoc, getDoc } from "firebase/firestore";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// --- CSS STYLES (Injected for Single File Portability) ---
-const GlobalStyles = () => (
-  <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Lora:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap');
+// --- IMPORTS ---
+import { db } from './firebase'; 
+import { collection, addDoc, doc, onSnapshot, updateDoc, getDoc } from 'firebase/firestore';
+import { initializeBattle, generateArmyData, resolveTurn, generateBattleReport } from './gemini';
+import './game.css'; 
 
-    :root {
-      --font-serif: 'Lora', serif;
-      --font-display: 'Cinzel', serif;
-      --font-mono: 'JetBrains Mono', monospace;
-    }
-
-    body {
-      background-color: #E6DFCD;
-      color: #292524;
-      margin: 0;
-      font-family: var(--font-serif);
-    }
-
-    /* Ancient Scrollbar */
-    ::-webkit-scrollbar { width: 8px; }
-    ::-webkit-scrollbar-track { background: #E6DFCD; }
-    ::-webkit-scrollbar-thumb { background: #D7C9AA; border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #A8A29E; }
-
-    /* Animations */
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .animate-in { animation: fadeIn 0.5s ease-out forwards; }
-  `}</style>
-);
-
-// --- FIREBASE SETUP ---
-// Using the config from your uploaded firebase.js
-const firebaseConfig = {
-  apiKey: "AIzaSyCOkyhoEb0jFZQDbjMtylMfcDC7jSOxn8Y",
-  authDomain: "battle-sim-multiplayer.firebaseapp.com",
-  projectId: "battle-sim-multiplayer",
-  storageBucket: "battle-sim-multiplayer.firebasestorage.app",
-  messagingSenderId: "269143153224",
-  appId: "1:269143153224:web:bdef73104a33fb2812967d"
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-// --- GEMINI AI & PROMPTS (Integrated) ---
-
-const SCENARIO_GENERATION_PROMPT = `
-Generate a unique ancient battle scenario.
-It must include:
-1. A creative Name (e.g., "The Siege of Broken Whispers").
-2. A Weather condition.
-3. A Terrain type.
-4. A vivid, sensory description of the environment (smells, sounds, visibility).
-5. A strategic Defense Bonus (float between 0.0 and 0.8).
-Return this as a JSON object.
-`;
-
-const BATTLE_RESOLUTION_PROMPT = `
-Analyze the following turn:
-- Attacker Move: [ATK_MOVE]
-- Defender Move: [DEF_MOVE]
-- Environment: [ENV_DESC]
-
-Determine the outcome based on realistic ancient warfare tactics.
-Return a JSON object with:
-- narrative: A 2-3 sentence description of the clash.
-- atkDamage: Integer (damage to attacker).
-- defDamage: Integer (damage to defender).
-`;
-
-const BATTLE_REPORT_PROMPT = `
-Analyze the provided Battle Log history.
-Act as a senior military analyst writing an After Action Report (AAR).
-
-Battle Log:
-[BATTLE_LOGS]
-
-Return a JSON object with this exact structure:
-{
-  "winner": "Attacker" or "Defender",
-  "tacticalAnalysis": "A paragraph explaining WHY they won. Mention specific moves.",
-  "strengths": ["Point 1", "Point 2"],
-  "mistakes": ["Point 1", "Point 2"],
-  "casualties": "Estimated number of dead/wounded based on damage taken"
-}
-`;
-
-// AI Setup
-// Note: In a real deploy, use import.meta.env.VITE_GEMINI_API_KEY. 
-// For this preview, we'll try to use it if available, or fall back gracefully.
-const API_KEY = import.meta.env?.VITE_GEMINI_API_KEY || ""; 
-let genAI = null;
-let model = null;
-
-if (API_KEY) {
-  genAI = new GoogleGenerativeAI(API_KEY);
-  model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-}
-
-const cleanJSON = (text) => {
-  try {
-    const match = text.match(/\{[\s\S]*\}/);
-    return match ? JSON.parse(match[0]) : null;
-  } catch (e) { return null; }
-};
-
-// --- DATA LISTS (Offline/Fallback) ---
-const BATTLE_NAMES_A = ['The Battle of', 'The Siege of', 'The Skirmish at', 'The Massacre at'];
-const BATTLE_NAMES_B = ['Broken', 'Weeping', 'Thunder', 'Silent', 'Burning', 'Frozen', 'Shadow', 'Iron'];
-const BATTLE_NAMES_C = ['Ridge', 'Valley', 'Keep', 'River', 'Pass', 'Fields', 'Gate', 'Wall'];
-const ENVIRONMENTS = [
-  { type: 'Fortress Siege', desc: 'A massive stone stronghold looming atop a jagged hill. The air smells of sulfur.', defenseBonus: 0.4 },
-  { type: 'Narrow Canyon', desc: 'A claustrophobic pass with towering red cliffs. The wind howls through the gap.', defenseBonus: 0.2 },
-  { type: 'Open Field', desc: 'Vast, rolling grassy plains stretching to the horizon. Nowhere to hide.', defenseBonus: 0.0 },
-  { type: 'River Bridge', desc: 'A fast-flowing, icy river cuts the battlefield in half, crossed only by a single stone bridge.', defenseBonus: 0.5 },
-];
-const WEATHER = ['Clear Skies', 'Heavy Rain', 'Thick Fog', 'Scorching Sun', 'Snowstorm'];
-
-const FALLBACK_DATA = {
-  'Medieval': {
-    infantry: { name: 'Men-at-Arms', str: 'Versatile frontline fighters.', weak: 'Vulnerable to armor-piercing.', equip: 'Poleaxe & Chainmail.' },
-    ranged: { name: 'Crossbowmen', str: 'High armor penetration.', weak: 'Slow reload.', equip: 'Heavy Arbalest & Pavese Shield.' },
-    special: { name: 'Knights', str: 'Devastating shock charge.', weak: 'Muddy terrain.', equip: 'Lance & Full Plate.' }
-  },
-  'Viking': {
-    infantry: { name: 'Berserkers', str: 'Shock troops.', weak: 'No armor.', equip: 'Dane Axe & Wolf Pelt.' },
-    ranged: { name: 'Skirmishers', str: 'Mobile harassment.', weak: 'Range.', equip: 'Light Javelins & Seax.' },
-    special: { name: 'Shield Wall', str: 'Impenetrable defense.', weak: 'Flanking.', equip: 'Round Shield & Spear.' }
-  }
-};
-
-const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-
-// --- CORE FUNCTIONS (Integrated) ---
-
-const initializeBattle = async () => {
-  if (model) {
-    try {
-      const result = await model.generateContent(SCENARIO_GENERATION_PROMPT);
-      const data = cleanJSON(result.response.text());
-      if (data) return {
-        name: data.name,
-        env: { type: data.terrain, desc: data.description, defenseBonus: data.defenseBonus },
-        weather: data.weather,
-        day: 1
-      };
-    } catch (e) { console.warn("AI Init failed, using fallback."); }
-  }
-  const env = rand(ENVIRONMENTS);
-  return {
-    name: `${rand(BATTLE_NAMES_A)} ${rand(BATTLE_NAMES_B)} ${rand(BATTLE_NAMES_C)}`,
-    env: env,
-    weather: rand(WEATHER),
-    day: 1
-  };
-};
-
-const generateArmyData = (isPlayer) => {
-  const cultureKey = rand(Object.keys(FALLBACK_DATA));
-  const cultureData = FALLBACK_DATA[cultureKey];
-  const size = randInt(2000, 8000);
-  return {
-    name: isPlayer ? "Player Legion" : "Enemy Horde",
-    culture: cultureKey,
-    totalSize: size,
-    morale: 100,
-    supplies: 100,
-    isPlayer,
-    units: [
-      { ...cultureData.infantry, count: Math.floor(size * 0.4), type: 'Infantry' },
-      { ...cultureData.ranged, count: Math.floor(size * 0.3), type: 'Ranged' },
-      { ...cultureData.special, count: Math.floor(size * 0.2), type: 'Special' },
-      { name: 'Siege Engines', count: randInt(0, 5), type: 'Siege', str: 'Destroys fortifications.', weak: 'Defenseless in melee.', equip: 'Trebuchet.' }
-    ]
-  };
-};
-
-const resolveTurn = async (atkMove, defMove, scenario) => {
-  if (model) {
-    try {
-      let prompt = BATTLE_RESOLUTION_PROMPT
-        .replace("[ATK_MOVE]", atkMove)
-        .replace("[DEF_MOVE]", defMove)
-        .replace("[ENV_DESC]", scenario.env.desc);
-      const result = await model.generateContent(prompt);
-      const data = cleanJSON(result.response.text());
-      if (data) return { narrative: data.narrative, atkDmg: data.atkDamage || 50, defDmg: data.defDamage || 50 };
-    } catch (e) { console.warn("AI Turn failed, using fallback."); }
-  }
-  return {
-    narrative: `Tactical engagement: Attackers "${atkMove}" vs Defenders "${defMove}". The clash was chaotic.`,
-    atkDmg: Math.floor(Math.random() * 100) + 20,
-    defDmg: Math.floor(Math.random() * 100) + 20
-  };
-};
-
-const generateBattleReport = async (logs) => {
-  if (model) {
-    try {
-      const logText = logs.map(l => `${l.role}: ${l.text}`).join("\n");
-      const prompt = BATTLE_REPORT_PROMPT.replace("[BATTLE_LOGS]", logText);
-      const result = await model.generateContent(prompt);
-      return cleanJSON(result.response.text());
-    } catch (e) { console.error("AI Report Error:", e); }
-  }
-  return {
-    winner: "Undetermined",
-    tacticalAnalysis: "Communication with HQ lost. Battle concluded locally.",
-    strengths: ["Unit Cohesion", "Rapid Deployment"],
-    mistakes: ["Communications Failure", "Limited Intel"],
-    casualties: "Estimated 30%"
-  };
-};
-
-
-// --- UI COMPONENTS (The New Design) ---
+// --- UI COMPONENTS ---
 
 const PaperCard = ({ children, className = "" }) => (
   <div className={`bg-[#F4ECD8] border border-[#D7C9AA] shadow-lg ${className}`}>
@@ -296,7 +79,7 @@ const UnitRow = ({ unit }) => {
   );
 };
 
-// --- MAIN UI COMPONENT ---
+// --- MAIN APPLICATION ---
 
 export default function BattleSimulator() {
   const [phase, setPhase] = useState('menu');
@@ -316,14 +99,17 @@ export default function BattleSimulator() {
 
   useEffect(() => {
     if (!gameId) return;
+
     const unsub = onSnapshot(doc(db, 'matches', gameId), (docSnapshot) => {
       if (docSnapshot.exists()) {
         const data = docSnapshot.data();
         setGameState(data);
+
         if (isHost && !data.processing) {
             if (data.attacker.totalSize <= 0 || data.defender.totalSize <= 0) {
                  handleGameEnd(data);
-            } else if (data.attacker.move && data.defender.move) {
+            } 
+            else if (data.attacker.move && data.defender.move) {
                  resolveMultiplayerTurn(data);
             }
         }
@@ -334,9 +120,15 @@ export default function BattleSimulator() {
 
   const handleGameEnd = async (data) => {
       if (data.status === 'finished') return;
+
       await updateDoc(doc(db, 'matches', gameId), { processing: true });
       const report = await generateBattleReport(data.logs);
-      await updateDoc(doc(db, 'matches', gameId), { status: 'finished', processing: false, report: report });
+      
+      await updateDoc(doc(db, 'matches', gameId), {
+          status: 'finished',
+          processing: false,
+          report: report
+      });
   };
 
   const createGame = async () => {
@@ -347,10 +139,13 @@ export default function BattleSimulator() {
     const initialLogs = [{ role: 'system', text: `SCRIBE RECORD STARTED: OPERATION "${scenario.name.toUpperCase()}"` }];
 
     const newGame = {
-      scenario, turn: 1, logs: initialLogs,
+      scenario,
+      turn: 1,
+      logs: initialLogs,
       attacker: { ...army1, move: null, isHost: hostIsAttacker },
       defender: { ...army2, move: null, isHost: !hostIsAttacker },
-      processing: false, status: 'waiting_for_player'
+      processing: false,
+      status: 'waiting_for_player'
     };
 
     const docRef = await addDoc(collection(db, 'matches'), newGame);
@@ -386,14 +181,18 @@ export default function BattleSimulator() {
     const army2 = generateArmyData(false);
     
     const startState = {
-      scenario, turn: 1,
+      scenario,
+      turn: 1,
       logs: [{ role: 'system', text: `SIMULATION STARTED: "${scenario.name.toUpperCase()}"` }],
       attacker: { ...army1, move: null },
       defender: { ...army2, move: null },
-      processing: false, status: 'active'
+      processing: false,
+      status: 'active'
     };
     setGameState(startState);
-    setIsHost(true); setMyRole('attacker'); setPhase('battle');
+    setIsHost(true); 
+    setMyRole('attacker'); 
+    setPhase('battle');
   };
 
   const submitMove = async () => {
@@ -404,7 +203,11 @@ export default function BattleSimulator() {
       const aiMove = "Hold defensive line and volley fire.";
       const result = await resolveTurn(playerMove, aiMove, gameState.scenario);
       
-      const newLogs = [...gameState.logs, { role: 'player', text: `Orders: ${playerMove}` }, { role: 'narrator', text: result.narrative }];
+      const newLogs = [...gameState.logs, 
+        { role: 'player', text: `Orders: ${playerMove}` },
+        { role: 'narrator', text: result.narrative }
+      ];
+      
       const newAttacker = { ...gameState.attacker, totalSize: Math.max(0, gameState.attacker.totalSize - result.atkDmg) };
       const newDefender = { ...gameState.defender, totalSize: Math.max(0, gameState.defender.totalSize - result.defDmg) };
       
@@ -415,7 +218,11 @@ export default function BattleSimulator() {
       }
 
       setGameState(prev => ({
-        ...prev, logs: newLogs, attacker: newAttacker, defender: newDefender, turn: prev.turn + 1
+        ...prev,
+        logs: newLogs,
+        attacker: newAttacker,
+        defender: newDefender,
+        turn: prev.turn + 1
       }));
       setInputBuffer('');
 
@@ -430,7 +237,10 @@ export default function BattleSimulator() {
     await updateDoc(doc(db, 'matches', gameId), { processing: true });
     const result = await resolveTurn(data.attacker.move, data.defender.move, data.scenario);
     
-    const newLogs = [...data.logs, { role: 'system', text: `TURN ${data.turn} COMPLETE` }, { role: 'narrator', text: result.narrative }];
+    const newLogs = [...data.logs, 
+      { role: 'system', text: `TURN ${data.turn} COMPLETE` },
+      { role: 'narrator', text: result.narrative }
+    ];
 
     await updateDoc(doc(db, 'matches', gameId), {
       logs: newLogs,
@@ -456,8 +266,6 @@ export default function BattleSimulator() {
   const isProcessing = gameState?.processing;
 
   return (
-    <>
-    <GlobalStyles />
     <div className="h-screen w-full bg-[#E6DFCD] text-stone-800 font-sans flex flex-col overflow-hidden">
       <div className="absolute inset-0 opacity-20 pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/aged-paper.png')]"></div>
 
@@ -487,6 +295,7 @@ export default function BattleSimulator() {
                 </div>
               </div>
             </div>
+            <div className="absolute bottom-4 text-[10px] text-stone-500 font-mono">EST. 2024 • BATTLE SIMULATOR</div>
         </div>
       )}
 
@@ -521,4 +330,104 @@ export default function BattleSimulator() {
       {phase === 'report' && (
         <div className="min-h-screen bg-[#E6DFCD] flex flex-col items-center justify-center p-6 relative z-10">
             <PaperCard className="max-w-3xl w-full p-12 relative">
-                <div className="absolute top-8 right-8 w-20 h-20 bg-red-800 rounded-full flex items-center justify-center shadow-lg border-4 border-red-900/40 text-red-100 font-serif font-bold text-xs text-center leading-tight opacity-9
+                <div className="absolute top-8 right-8 w-20 h-20 bg-red-800 rounded-full flex items-center justify-center shadow-lg border-4 border-red-900/40 text-red-100 font-serif font-bold text-xs text-center leading-tight opacity-90">OFFICIAL<br/>RECORD</div>
+                <div className="text-center mb-12">
+                    <h2 className="text-4xl font-black text-stone-900 font-serif mb-2 uppercase tracking-widest border-b-4 border-double border-stone-300 inline-block pb-2">After Action Report</h2>
+                    <p className="mt-4 text-stone-500 font-mono text-xs uppercase tracking-[0.3em]">Operation: {gameState?.scenario?.name}</p>
+                </div>
+                {reportData ? (
+                  <div className="space-y-10">
+                      <div>
+                         <h3 className="text-xs font-bold uppercase text-stone-400 tracking-[0.2em] mb-4 text-center">--- Tactical Summary ---</h3>
+                         <p className="text-stone-800 leading-loose text-lg font-serif italic text-justify px-8">"{reportData.tacticalAnalysis}"</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-8 border-t border-b border-stone-300 py-8">
+                          <div>
+                              <h3 className="text-xs font-bold uppercase text-blue-900 tracking-widest mb-4 flex items-center gap-2"><Shield size={14}/> Commendations</h3>
+                              <ul className="space-y-3">{reportData.strengths?.map((s, i) => (<li key={i} className="text-sm text-stone-700 flex items-start gap-3 font-serif"><span className="text-blue-900 font-bold">✓</span> {s}</li>))}</ul>
+                          </div>
+                          <div>
+                              <h3 className="text-xs font-bold uppercase text-red-900 tracking-widest mb-4 flex items-center gap-2"><AlertTriangle size={14}/> Infractions</h3>
+                              <ul className="space-y-3">{reportData.mistakes?.map((s, i) => (<li key={i} className="text-sm text-stone-700 flex items-start gap-3 font-serif"><span className="text-red-900 font-bold">✗</span> {s}</li>))}</ul>
+                          </div>
+                      </div>
+                      <div className="flex justify-between items-end">
+                          <div className="text-left"><div className="text-[10px] text-stone-500 uppercase tracking-widest mb-1">Total Casualties</div><div className="text-2xl font-mono text-red-900 font-bold">{reportData.casualties}</div></div>
+                          <button onClick={() => setPhase('menu')} className="bg-stone-800 text-[#F4ECD8] px-8 py-3 font-bold uppercase tracking-widest text-xs hover:bg-stone-700 transition-colors shadow-lg">Close Ledger</button>
+                      </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-12 flex flex-col items-center gap-4"><Feather className="animate-bounce text-stone-400"/><p className="text-stone-500 font-serif italic">Scribes are compiling the records...</p></div>
+                )}
+            </PaperCard>
+        </div>
+      )}
+
+      {(phase === 'battle' || (gameState && !['menu', 'lobby', 'report'].includes(phase))) && (
+        <div className="h-screen flex flex-col md:flex-row overflow-hidden bg-[#E6DFCD] text-stone-800 font-sans z-10 relative">
+          <div className="flex-1 flex flex-col relative z-10 min-w-0 bg-[#F4ECD8] shadow-2xl m-2 md:m-6 border border-[#D7C9AA]">
+            <header className="h-16 flex items-center justify-between px-6 border-b-2 border-double border-[#D7C9AA] bg-[#F9F5EB]">
+              <div className="flex items-center gap-4">
+                <div className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-[#F4ECD8]"><Sword size={14} /></div>
+                <div>
+                   <h2 className="text-sm font-bold text-amber-950 font-serif uppercase tracking-wide">{gameState?.scenario?.name}</h2>
+                   <div className="flex items-center gap-2 text-[10px] text-stone-500 font-mono"><span>DAY {gameState?.scenario?.day || 1}</span><span className="text-stone-300">•</span><span>{gameState?.scenario?.weather?.toUpperCase()}</span></div>
+                </div>
+              </div>
+              <button onClick={() => { if(window.confirm("Abort Battle?")) setPhase('menu'); }} className="text-xs font-bold text-red-900 hover:text-red-700 transition-colors px-4 py-2 border-2 border-red-900/20 uppercase tracking-widest hover:bg-red-50">Cease Fire</button>
+            </header>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-thin scrollbar-thumb-stone-300 scrollbar-track-transparent">
+              <div className="text-center py-4"><span className="text-xs font-serif italic text-stone-400 px-4 border-b border-stone-200">The Chronicle Begins</span></div>
+              {gameState?.logs?.map((log, i) => (
+                <div key={i} className={`flex gap-4 animate-in fade-in slide-in-from-bottom-2 duration-700 ${log.role === 'player' ? 'flex-row-reverse' : ''}`}>
+                   <div className={`mt-1 w-8 h-8 flex-shrink-0 flex items-center justify-center border-2 ${log.role === 'system' ? 'border-amber-900 bg-amber-900 text-[#F4ECD8]' : log.role === 'player' ? 'border-blue-900 bg-blue-900 text-white rounded-full' : 'border-stone-400 bg-transparent text-stone-400 rounded-full'}`}>
+                       {log.role === 'system' ? <Scroll size={14}/> : log.role === 'player' ? <Users size={14}/> : <Feather size={14}/>}
+                   </div>
+                   <div className={`max-w-[85%] ${log.role === 'player' ? 'text-right' : ''}`}>
+                      <div className="flex items-center gap-2 mb-1 text-[10px] font-bold uppercase tracking-widest opacity-60"><span className={log.role === 'system' ? 'text-amber-900' : log.role === 'player' ? 'text-blue-900' : 'text-stone-500'}>{log.role === 'system' ? 'ROYAL DECREE' : log.role}</span></div>
+                      <div className={`text-sm leading-relaxed p-3 ${log.role === 'system' ? 'font-mono text-amber-900 bg-amber-50 border border-amber-200' : log.role === 'narrator' ? 'text-stone-900 font-serif italic text-lg' : 'text-blue-900 font-serif font-medium bg-blue-50/50 border border-blue-100 rounded-lg'}`}>{log.text}</div>
+                   </div>
+                </div>
+              ))}
+              <div ref={logsEndRef} />
+            </div>
+
+            <div className="p-6 bg-[#F9F5EB] border-t border-[#D7C9AA] relative">
+              {isProcessing ? <div className="absolute inset-0 bg-[#F4ECD8]/80 z-10 flex items-center justify-center text-amber-900 font-serif italic"><Feather className="animate-bounce mr-2"/> Scribing outcome...</div> : isWaitingForEnemy ? <div className="absolute inset-0 bg-[#F4ECD8]/80 z-10 flex items-center justify-center text-stone-500 font-serif italic"><Clock className="animate-spin mr-2"/> Awaiting adversary's decree...</div> : null}
+               <div className="relative">
+                 <Feather size={16} className="absolute left-0 top-3 text-stone-400" />
+                 <input value={inputBuffer} onChange={(e) => setInputBuffer(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitMove(); }}} className="w-full bg-transparent border-b-2 border-stone-300 text-stone-900 placeholder-stone-400 px-8 py-2 focus:outline-none focus:border-stone-800 font-serif text-lg transition-colors italic" placeholder="Inscribe your orders here, Commander..." disabled={iHaveMoved || isProcessing} />
+                 <button onClick={submitMove} disabled={iHaveMoved || isProcessing} className="absolute right-0 top-1 bg-stone-800 text-[#F4ECD8] px-4 py-1.5 text-xs font-bold uppercase tracking-widest hover:bg-stone-700">Send</button>
+               </div>
+            </div>
+          </div>
+
+          <div className="w-full md:w-80 bg-[#EBE0C5] border-l border-[#D7C9AA] z-20 flex flex-col shadow-[-10px_0_20px_-10px_rgba(0,0,0,0.1)]">
+            <div className="p-4 border-b border-[#D7C9AA] bg-[#E6DFCD]"><h2 className="text-xs font-black text-amber-900 uppercase tracking-[0.2em] flex items-center gap-2 text-center w-full justify-center">Field Intelligence</h2></div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-6">
+              <div className="bg-[#F4ECD8] p-4 border border-[#D7C9AA] shadow-sm">
+                <h3 className="flex items-center gap-2 text-stone-900 font-bold font-serif mb-3 border-b border-stone-200 pb-2"><MapIcon size={16} className="text-stone-600"/> {gameState?.scenario?.env.type}</h3>
+                <p className="text-xs text-stone-600 leading-relaxed mb-3 font-serif italic">"{gameState?.scenario?.env.desc}"</p>
+                <div className="flex gap-2"><InkBadge color="stone">Def: {gameState?.scenario?.env.defenseBonus * 100}%</InkBadge><InkBadge color="amber">{gameState?.scenario?.weather}</InkBadge></div>
+              </div>
+               <div>
+                 <div className="flex items-center justify-between mb-2 px-1 border-b-2 border-stone-800 pb-1"><div className="text-xs font-black text-blue-900 uppercase tracking-wide">My Forces</div></div>
+                 <div className="bg-[#F4ECD8] border border-[#D7C9AA] shadow-sm">{myArmy && myArmy.units.map((u, i) => <UnitRow key={i} unit={u} />)}</div>
+               </div>
+               <div>
+                 <div className="flex items-center justify-between mb-2 px-1 border-b-2 border-stone-800 pb-1"><div className="text-xs font-black text-red-900 uppercase tracking-wide">Enemy Intel</div></div>
+                 <div className="p-6 bg-[#F4ECD8] border border-[#D7C9AA] text-center relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-2 opacity-10"><Skull size={48} className="text-red-950"/></div>
+                    <div className="text-sm font-bold text-red-900 font-serif mb-1">{enemyArmy?.totalSize > 0 ? "Hostile Force" : "Defeated"}</div>
+                    <div className="text-xs text-stone-500 uppercase tracking-widest mb-2">{enemyArmy?.totalSize > 0 ? `~${enemyArmy.totalSize} Detected` : "0 Detected"}</div>
+                    <div className="w-full h-1 bg-stone-200 rounded-full overflow-hidden"><div className="w-full h-full bg-red-900/50" style={{ width: `${enemyArmy?.morale || 0}%` }}></div></div>
+                 </div>
+               </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
