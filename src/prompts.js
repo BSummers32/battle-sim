@@ -39,3 +39,21 @@ For each unit, provide:
 - Equipment: A detailed description of their primary weapon and armor. Explain WHAT it is and HOW it is used. (e.g. "Halberd: A two-handed polearm with an axe blade and spike, used to trip horses and pierce armor.")
 Return as JSON.
 `;
+
+// --- NEW REPORT PROMPT ---
+export const BATTLE_REPORT_PROMPT = `
+Analyze the provided Battle Log history.
+Act as a senior military analyst writing an After Action Report (AAR).
+
+Battle Log:
+[BATTLE_LOGS]
+
+Return a JSON object with this exact structure:
+{
+  "winner": "Attacker" or "Defender",
+  "tacticalAnalysis": "A paragraph explaining WHY they won. Mention specific moves.",
+  "strengths": ["Point 1", "Point 2"],
+  "mistakes": ["Point 1", "Point 2"],
+  "casualties": "Estimated number of dead/wounded based on damage taken"
+}
+`;

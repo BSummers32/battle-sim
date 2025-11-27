@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Shield, Map as MapIcon, Users, Brain, Activity, Scroll, Sword, ChevronDown, ChevronUp, Copy, Play } from 'lucide-react';
+import { Shield, Map as MapIcon, Users, Brain, Activity, Scroll, Sword, ChevronDown, ChevronUp, Copy, Play, ArrowLeft, FileText, AlertTriangle } from 'lucide-react';
 import { db } from './firebase'; 
-import { collection, addDoc, doc, onSnapshot, updateDoc, getDoc, setDoc } from 'firebase/firestore';
-import { initializeBattle, generateArmyData, resolveTurn } from './gemini';
+import { collection, addDoc, doc, onSnapshot, updateDoc, getDoc } from 'firebase/firestore';
+import { initializeBattle, generateArmyData, resolveTurn, generateBattleReport } from './gemini';
 import './game.css'; 
 
 // --- SUB-COMPONENTS ---
-
 const UnitDropdown = ({ unit }) => {
   const [isOpen, setIsOpen] = useState(false);
   return (
@@ -48,17 +47,18 @@ const UnitDropdown = ({ unit }) => {
 export default function BattleSimulator() {
   // App State
   const [phase, setPhase] = useState('menu'); // menu, lobby, battle, report
-  const [mode, setMode] = useState(null); // 'PvE' or 'PvP'
+  const [mode, setMode] = useState(null);
   const [inputBuffer, setInputBuffer] = useState('');
   
   // Multiplayer State
   const [roomCode, setRoomCode] = useState('');
   const [gameId, setGameId] = useState(null);
   const [isHost, setIsHost] = useState(false);
-  const [myRole, setMyRole] = useState(null); // 'attacker' or 'defender'
+  const [myRole, setMyRole] = useState(null);
   
-  // Game Data (Synced)
+  // Game Data
   const [gameState, setGameState] = useState(null);
+  const [reportData, setReportData] = useState(null); // Stores AI Report
   const logsEndRef = useRef(null);
 
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [gameState?.logs]);
@@ -71,31 +71,45 @@ export default function BattleSimulator() {
       if (docSnapshot.exists()) {
         const data = docSnapshot.data();
         setGameState(data);
-        
-        // Auto-detect role if not set
-        if (!myRole) {
-           // We set role manually during creation/join, but this is a fail-safe
-        }
 
-        // HOST LOGIC: Check if turn needs resolution
-        if (isHost && data.attacker.move && data.defender.move && !data.processing) {
-          resolveMultiplayerTurn(data);
+        // HOST LOGIC: Check for Turn Resolution OR Game End
+        if (isHost && !data.processing) {
+            // Game Over Check
+            if (data.attacker.totalSize <= 0 || data.defender.totalSize <= 0) {
+                 handleGameEnd(data);
+            } 
+            // Turn Resolution Check
+            else if (data.attacker.move && data.defender.move) {
+                 resolveMultiplayerTurn(data);
+            }
         }
       }
     });
-
     return () => unsub();
-  }, [gameId, isHost, myRole]);
+  }, [gameId, isHost]);
 
   // --- ACTIONS ---
 
+  const handleGameEnd = async (data) => {
+      // Only run once
+      if (data.status === 'finished') return;
+
+      await updateDoc(doc(db, 'matches', gameId), { processing: true });
+      
+      // Generate AI Report
+      const report = await generateBattleReport(data.logs);
+      
+      await updateDoc(doc(db, 'matches', gameId), {
+          status: 'finished',
+          processing: false,
+          report: report // Save report to DB so both see it
+      });
+  };
+
   const createGame = async () => {
-    // 1. Generate Data
     const scenario = await initializeBattle();
     const army1 = generateArmyData(true);
     const army2 = generateArmyData(true);
-    
-    // 2. Randomize Host Role
     const hostIsAttacker = Math.random() > 0.5;
     const initialLogs = [{ role: 'system', text: `SECURE CHANNEL ESTABLISHED. OPERATION: "${scenario.name.toUpperCase()}"` }];
 
@@ -109,7 +123,6 @@ export default function BattleSimulator() {
       status: 'waiting_for_player'
     };
 
-    // 3. Save to DB
     const docRef = await addDoc(collection(db, 'matches'), newGame);
     setGameId(docRef.id);
     setIsHost(true);
@@ -120,34 +133,25 @@ export default function BattleSimulator() {
   const joinGame = async () => {
     if (!roomCode) return;
     try {
-      const docRef = doc(db, 'matches', roomCode); // Using ID as code for simplicity
+      const docRef = doc(db, 'matches', roomCode);
       const snap = await getDoc(docRef);
-      
       if (snap.exists()) {
         const data = snap.data();
-        // Determine guest role (opposite of host)
         const hostIsAttacker = data.attacker.isHost;
-        const myNewRole = hostIsAttacker ? 'defender' : 'attacker';
-        
-        // Update DB to say we joined
         await updateDoc(docRef, { status: 'active' });
-        
         setGameId(roomCode);
         setIsHost(false);
-        setMyRole(myNewRole);
+        setMyRole(hostIsAttacker ? 'defender' : 'attacker');
         setPhase('battle');
       } else {
         alert("Invalid Room Code");
       }
-    } catch (e) {
-      console.error(e);
-      alert("Error joining game");
-    }
+    } catch (e) { console.error(e); alert("Error joining game"); }
   };
 
   const startPvE = async () => {
     setMode('PvE');
-    // Local PvE Logic (No DB)
+    // For local PvE, we simulate the DB structure in local state for simplicity
     const scenario = await initializeBattle();
     const army1 = generateArmyData(true);
     const army2 = generateArmyData(false);
@@ -171,10 +175,9 @@ export default function BattleSimulator() {
     if (!inputBuffer.trim()) return;
 
     if (mode === 'PvE') {
-      // Local Resolution
+      // Local Logic
       const playerMove = inputBuffer;
-      const aiMove = "Hold defensive line and volley fire."; // Simple AI
-      
+      const aiMove = "Hold defensive line and volley fire.";
       const result = await resolveTurn(playerMove, aiMove, gameState.scenario);
       
       const newLogs = [...gameState.logs, 
@@ -185,6 +188,13 @@ export default function BattleSimulator() {
       const newAttacker = { ...gameState.attacker, totalSize: Math.max(0, gameState.attacker.totalSize - result.atkDmg) };
       const newDefender = { ...gameState.defender, totalSize: Math.max(0, gameState.defender.totalSize - result.defDmg) };
       
+      // Check End Game Locally
+      if (newAttacker.totalSize <= 0 || newDefender.totalSize <= 0) {
+         const report = await generateBattleReport(newLogs);
+         setReportData(report);
+         setPhase('report');
+      }
+
       setGameState(prev => ({
         ...prev,
         logs: newLogs,
@@ -195,19 +205,15 @@ export default function BattleSimulator() {
       setInputBuffer('');
 
     } else {
-      // Multiplayer Submission
+      // Multiplayer Logic
       const moveField = `${myRole}.move`;
-      await updateDoc(doc(db, 'matches', gameId), {
-        [moveField]: inputBuffer
-      });
+      await updateDoc(doc(db, 'matches', gameId), { [moveField]: inputBuffer });
       setInputBuffer('');
     }
   };
 
   const resolveMultiplayerTurn = async (data) => {
-    // Only Host runs this to save API calls
     await updateDoc(doc(db, 'matches', gameId), { processing: true });
-
     const result = await resolveTurn(data.attacker.move, data.defender.move, data.scenario);
     
     const newLogs = [...data.logs, 
@@ -230,6 +236,12 @@ export default function BattleSimulator() {
   const myArmy = gameState ? gameState[myRole] : null;
   const enemyArmy = gameState ? gameState[myRole === 'attacker' ? 'defender' : 'attacker'] : null;
 
+  // Watch for Finished Game in Multiplayer
+  if (mode !== 'PvE' && gameState?.status === 'finished' && phase !== 'report') {
+      setReportData(gameState.report);
+      setPhase('report');
+  }
+
   // --- MENU ---
   if (phase === 'menu') {
     return (
@@ -237,8 +249,8 @@ export default function BattleSimulator() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_#1e293b,_#020617)]"></div>
         <div className="z-10 text-center max-w-2xl">
           <Sword size={64} className="mx-auto text-amber-600 animate-pulse-glow mb-6" />
-          <h1 className="text-6xl font-black mb-4 text-transparent bg-clip-text bg-gradient-to-b from-amber-200 to-amber-700">WAR ROOM</h1>
-          <p className="mb-12 text-slate-400 tracking-widest uppercase border-y border-slate-800 py-2">Multiplayer Capable v3.0</p>
+          <h1 className="text-6xl font-black mb-4 text-transparent bg-clip-text bg-gradient-to-b from-amber-200 to-amber-700">WAR ROOM v3.0</h1>
+          <p className="mb-12 text-slate-400 tracking-widest uppercase border-y border-slate-800 py-2">Multiplayer Capable</p>
           <div className="flex gap-6 justify-center">
             <button onClick={startPvE} className="glass-panel px-8 py-4 hover:border-amber-500 transition-colors rounded-xl flex flex-col items-center gap-2 group w-48">
               <Brain className="text-amber-500 group-hover:scale-110 transition-transform" />
@@ -265,7 +277,13 @@ export default function BattleSimulator() {
   // --- LOBBY ---
   if (phase === 'lobby') {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white font-tech">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white font-tech relative">
+        <button 
+          onClick={() => setPhase('menu')}
+          className="absolute top-6 left-6 flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
+        >
+          <ArrowLeft size={20}/> BACK TO MENU
+        </button>
         <div className="glass-panel p-8 rounded-xl text-center animate-in zoom-in-95 duration-300">
           <h2 className="text-2xl text-amber-500 mb-4 font-bold uppercase tracking-widest">Waiting for Opponent</h2>
           <div className="bg-black/40 p-6 rounded border border-slate-700 mb-6">
@@ -277,8 +295,6 @@ export default function BattleSimulator() {
           <div className="flex justify-center items-center gap-2 text-slate-500 animate-pulse">
             <Activity size={16} /> <span>Scanning for connection...</span>
           </div>
-          
-          {/* Auto-start check */}
           {gameState && gameState.status === 'active' && (
              <button onClick={() => setPhase('battle')} className="mt-8 bg-green-600 hover:bg-green-500 text-white px-8 py-3 rounded font-bold flex items-center gap-2 mx-auto">
                <Play size={16}/> DEPLOY NOW
@@ -287,6 +303,57 @@ export default function BattleSimulator() {
         </div>
       </div>
     );
+  }
+
+  // --- REPORT ---
+  if (phase === 'report') {
+      return (
+        <div className="min-h-screen bg-slate-950 text-slate-200 p-8 flex flex-col items-center justify-center">
+            <div className="max-w-2xl w-full glass-panel p-8 rounded-xl">
+                <header className="border-b border-slate-700 pb-4 mb-6 text-center">
+                    <FileText size={48} className="mx-auto text-amber-500 mb-2"/>
+                    <h2 className="text-3xl font-serif font-bold text-white uppercase tracking-widest">After Action Report</h2>
+                    <p className="text-slate-500">Operation: {gameState?.scenario?.name}</p>
+                </header>
+                
+                {reportData ? (
+                    <div className="space-y-6">
+                        <div className="bg-black/40 p-4 rounded border border-slate-700">
+                            <h3 className="text-amber-500 font-bold uppercase text-xs tracking-wider mb-2">Tactical Analysis</h3>
+                            <p className="leading-relaxed text-slate-300">{reportData.tacticalAnalysis}</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-emerald-950/20 p-4 rounded border border-emerald-900/50">
+                                <h3 className="text-emerald-500 font-bold uppercase text-xs tracking-wider mb-2">Key Strengths</h3>
+                                <ul className="list-disc list-inside text-sm text-slate-400">
+                                    {reportData.strengths?.map((s, i) => <li key={i}>{s}</li>)}
+                                </ul>
+                            </div>
+                            <div className="bg-red-950/20 p-4 rounded border border-red-900/50">
+                                <h3 className="text-red-500 font-bold uppercase text-xs tracking-wider mb-2">Critical Mistakes</h3>
+                                <ul className="list-disc list-inside text-sm text-slate-400">
+                                    {reportData.mistakes?.map((s, i) => <li key={i}>{s}</li>)}
+                                </ul>
+                            </div>
+                        </div>
+                        <div className="text-center pt-4 border-t border-slate-700">
+                            <p className="text-xs text-slate-500 uppercase">Estimated Casualties</p>
+                            <p className="text-xl font-mono text-red-400">{reportData.casualties}</p>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="text-center py-12 animate-pulse">
+                        <Activity className="mx-auto mb-4 text-blue-500"/>
+                        <p>Compiling Battle Data...</p>
+                    </div>
+                )}
+
+                <button onClick={() => setPhase('menu')} className="w-full mt-8 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded font-bold uppercase">
+                    Return to War Room
+                </button>
+            </div>
+        </div>
+      );
   }
 
   // --- BATTLE ---
@@ -302,9 +369,12 @@ export default function BattleSimulator() {
           <div className="flex items-center gap-2 text-amber-500 font-bold">
             <Activity size={20}/> <span>{gameState?.scenario?.name.toUpperCase()}</span>
           </div>
-          <div className="text-xs font-mono text-slate-500">
-             ROLE: <span className={myRole === 'attacker' ? 'text-red-400' : 'text-blue-400'}>{myRole?.toUpperCase()}</span>
-          </div>
+          <button 
+            onClick={() => { if(window.confirm("Abort Battle?")) setPhase('menu'); }} 
+            className="text-xs text-red-400 hover:text-red-300 uppercase flex items-center gap-1"
+          >
+            <AlertTriangle size={12}/> Abort
+          </button>
         </header>
 
         <div className="flex-1 overflow-y-auto space-y-4 pr-2 scrollbar-thin">

@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { SCENARIO_GENERATION_PROMPT, BATTLE_RESOLUTION_PROMPT } from "./prompts";
+import { SCENARIO_GENERATION_PROMPT, BATTLE_RESOLUTION_PROMPT, BATTLE_REPORT_PROMPT } from "./prompts";
 
 // --- CONFIGURATION ---
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY; 
@@ -17,73 +17,6 @@ const cleanJSON = (text) => {
   const match = text.match(/\{[\s\S]*\}/);
   return match ? JSON.parse(match[0]) : null;
 };
-
-// --- RICH FALLBACK DATA (Detailed descriptions) ---
-const FALLBACK_DATA = {
-  'Medieval': {
-    infantry: { 
-      name: 'Men-at-Arms', 
-      str: 'Versatile frontline fighters adapted for sustained melee.', 
-      weak: 'Vulnerable to armor-piercing bolts and heavy blunt force.', 
-      equip: 'Poleaxe (A long-handled axe-hammer hybrid designed to crush plate armor and hook shields), Chainmail Hauberk (A flexible shirt of interlocking metal rings, excellent against slashing attacks but offers poor protection against heavy impact).' 
-    },
-    ranged: { 
-      name: 'Crossbowmen', 
-      str: 'High armor penetration capable of stopping knights.', 
-      weak: 'Very slow reload rate leaves them exposed.', 
-      equip: 'Heavy Arbalest (Mechanical bow requiring a winch to span, fires bolts with immense force), Pavese Shield (A massive wooden shield propped up on the ground to provide cover while reloading).' 
-    },
-    special: { 
-      name: 'Knights', 
-      str: 'Devastating shock charge that breaks enemy formations.', 
-      weak: 'Muddy terrain or losing momentum makes them easy targets.', 
-      equip: 'Lance (A long wooden spear used to deliver all the horse\'s momentum into a single point), Full Plate Armor (Interlocking steel plates offering near-total immunity to slashing weapons).' 
-    }
-  },
-  'Viking': {
-    infantry: { 
-      name: 'Berserkers', 
-      str: 'Shock troops who enter a trance-like fury to ignore pain.', 
-      weak: 'Lack of armor makes them susceptible to arrow fire.', 
-      equip: 'Dane Axe (A massive two-handed axe capable of cleaving shields and helmets), Wolf Pelt (Symbolic "armor" meant to channel primal aggression rather than deflect blows).' 
-    },
-    ranged: { 
-      name: 'Skirmishers', 
-      str: 'Mobile harassment and fluid movement.', 
-      weak: 'Cannot trade volleys with dedicated longbowmen.', 
-      equip: 'Light Javelins (Throwing spears designed to weigh down enemy shields), Seax (Single-edged knife for close-quarters fighting).' 
-    },
-    special: { 
-      name: 'Shield Wall', 
-      str: 'Impenetrable defense against frontal assaults.', 
-      weak: 'Slow movement and vulnerable to flanking.', 
-      equip: 'Round Linden Shield (Large wooden shield with an iron boss, used to overlap with allies), Thrusting Spear (Simple effective weapon for fighting from behind the shield wall).' 
-    }
-  },
-  'Roman': {
-    infantry: { 
-      name: 'Legionaries', 
-      str: 'Disciplined formation fighting and stamina.', 
-      weak: 'Rigid formations struggle in uneven terrain or forests.', 
-      equip: 'Gladius (Short stabbing sword optimized for tight formations), Scutum (Curved rectangular tower shield offering full-body coverage).' 
-    },
-    ranged: { 
-      name: 'Velites', 
-      str: 'Fast moving scouts who disrupt enemy lines.', 
-      weak: 'No armor, easily killed in melee.', 
-      equip: 'Verutum (Short javelins thrown in volleys to break up charges), Wolf Skin Hood (Worn to be easily identified by officers).' 
-    },
-    special: { 
-      name: 'Praetorians', 
-      str: 'Elite heavy infantry with superior morale.', 
-      weak: 'Expensive to maintain and slow moving.', 
-      equip: 'Segmented Plate (Lorica Segmentata offering superior flexibility and protection), Hasta (Heavy thrusting spear).' 
-    }
-  }
-};
-
-const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
 // --- MAIN FUNCTIONS ---
 
@@ -111,7 +44,6 @@ export const generateArmyData = (isPlayer) => {
   const cultureKey = rand(Object.keys(FALLBACK_DATA));
   const cultureData = FALLBACK_DATA[cultureKey];
   
-  // Mix in a second culture for variety
   const cultureKey2 = rand(Object.keys(FALLBACK_DATA));
   const cultureData2 = FALLBACK_DATA[cultureKey2];
 
@@ -157,7 +89,47 @@ export const resolveTurn = async (atkMove, defMove, scenario) => {
   }
 };
 
-// --- FALLBACKS (Scenario & Turn only) ---
+// --- NEW REPORT FUNCTION ---
+export const generateBattleReport = async (logs) => {
+  if (!API_KEY) return fallbackReport();
+
+  try {
+    // Convert logs array to a string for the AI to read
+    const logText = logs.map(l => `${l.role}: ${l.text}`).join("\n");
+    const prompt = BATTLE_REPORT_PROMPT.replace("[BATTLE_LOGS]", logText);
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return cleanJSON(response.text());
+  } catch (error) {
+    console.error("AI Report Error:", error);
+    return fallbackReport();
+  }
+};
+
+
+// --- FALLBACK DATA ---
+
+const FALLBACK_DATA = {
+  'Medieval': {
+    infantry: { name: 'Men-at-Arms', str: 'Versatile frontline fighters.', weak: 'Vulnerable to armor-piercing.', equip: 'Poleaxe & Chainmail.' },
+    ranged: { name: 'Crossbowmen', str: 'High armor penetration.', weak: 'Slow reload.', equip: 'Heavy Arbalest & Pavese Shield.' },
+    special: { name: 'Knights', str: 'Devastating shock charge.', weak: 'Muddy terrain.', equip: 'Lance & Full Plate.' }
+  },
+  'Viking': {
+    infantry: { name: 'Berserkers', str: 'Shock troops.', weak: 'No armor.', equip: 'Dane Axe & Wolf Pelt.' },
+    ranged: { name: 'Skirmishers', str: 'Mobile harassment.', weak: 'Range.', equip: 'Light Javelins & Seax.' },
+    special: { name: 'Shield Wall', str: 'Impenetrable defense.', weak: 'Flanking.', equip: 'Round Shield & Spear.' }
+  },
+  'Roman': {
+    infantry: { name: 'Legionaries', str: 'Disciplined formation.', weak: 'Uneven terrain.', equip: 'Gladius & Scutum.' },
+    ranged: { name: 'Velites', str: 'Fast moving scouts.', weak: 'No armor.', equip: 'Verutum & Wolf Skin.' },
+    special: { name: 'Praetorians', str: 'Elite heavy infantry.', weak: 'Expensive.', equip: 'Lorica Segmentata & Hasta.' }
+  }
+};
+
+const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
 const fallbackScenario = () => ({
   name: "Training Simulation",
@@ -170,4 +142,12 @@ const fallbackTurn = (atk, def) => ({
   narrative: `Tactical engagement underway. Attackers attempted: "${atk}". Defenders responded with: "${def}".`,
   atkDmg: Math.floor(Math.random() * 100),
   defDmg: Math.floor(Math.random() * 100)
+});
+
+const fallbackReport = () => ({
+  winner: "Unknown",
+  tacticalAnalysis: "Communication with HQ lost. Battle concluded.",
+  strengths: ["Data corrupted"],
+  mistakes: ["Data corrupted"],
+  casualties: "Unknown"
 });
