@@ -147,13 +147,7 @@ export default function BattleSimulator() {
 
   const startPvE = async () => {
     setMode('PvE');
-    // For PvE we just use local state mocked as "gameState" for simplicity
-    // or we could use the same DB logic but standard local is faster/free
-    // ... (Keeping previous local logic for PvE would be ideal, but for code brevity
-    // we will route PvE through the same 'createGame' logic but just auto-play the opponent)
-    // Actually, let's keep PvE strictly local to save DB writes.
-    
-    // RE-IMPLEMENTING LOCAL PVE SETUP:
+    // Local PvE Logic (No DB)
     const scenario = await initializeBattle();
     const army1 = generateArmyData(true);
     const army2 = generateArmyData(false);
@@ -169,7 +163,7 @@ export default function BattleSimulator() {
     };
     setGameState(startState);
     setIsHost(true); 
-    setMyRole('attacker'); // Player is always attacker in quick PvE for now, or randomize
+    setMyRole('attacker'); 
     setPhase('battle');
   };
 
