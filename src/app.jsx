@@ -1,40 +1,294 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Shield, Map as MapIcon, Users, Brain, Activity, Scroll, Sword, ChevronDown, ChevronUp, Copy, Play, ArrowLeft, FileText, AlertTriangle } from 'lucide-react';
-import { db } from './firebase'; 
-import { collection, addDoc, doc, onSnapshot, updateDoc, getDoc } from 'firebase/firestore';
-import { initializeBattle, generateArmyData, resolveTurn, generateBattleReport } from './gemini';
-import './game.css'; 
+import { createRoot } from 'react-dom/client';
+import { 
+  Shield, Map as MapIcon, Users, Brain, Activity, 
+  Sword, ChevronDown, ChevronUp, Copy, Play, 
+  ArrowLeft, FileText, AlertTriangle, Terminal,
+  MessageSquare, Skull, Target, Zap, Wind, Clock,
+  Feather, Scroll, X
+} from 'lucide-react';
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, addDoc, doc, onSnapshot, updateDoc, getDoc } from "firebase/firestore";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// --- SUB-COMPONENTS ---
-const UnitDropdown = ({ unit }) => {
+// --- CSS STYLES (Injected for Single File Portability) ---
+const GlobalStyles = () => (
+  <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Lora:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap');
+
+    :root {
+      --font-serif: 'Lora', serif;
+      --font-display: 'Cinzel', serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    body {
+      background-color: #E6DFCD;
+      color: #292524;
+      margin: 0;
+      font-family: var(--font-serif);
+    }
+
+    /* Ancient Scrollbar */
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #E6DFCD; }
+    ::-webkit-scrollbar-thumb { background: #D7C9AA; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #A8A29E; }
+
+    /* Animations */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-in { animation: fadeIn 0.5s ease-out forwards; }
+  `}</style>
+);
+
+// --- FIREBASE SETUP ---
+// Using the config from your uploaded firebase.js
+const firebaseConfig = {
+  apiKey: "AIzaSyCOkyhoEb0jFZQDbjMtylMfcDC7jSOxn8Y",
+  authDomain: "battle-sim-multiplayer.firebaseapp.com",
+  projectId: "battle-sim-multiplayer",
+  storageBucket: "battle-sim-multiplayer.firebasestorage.app",
+  messagingSenderId: "269143153224",
+  appId: "1:269143153224:web:bdef73104a33fb2812967d"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// --- GEMINI AI & PROMPTS (Integrated) ---
+
+const SCENARIO_GENERATION_PROMPT = `
+Generate a unique ancient battle scenario.
+It must include:
+1. A creative Name (e.g., "The Siege of Broken Whispers").
+2. A Weather condition.
+3. A Terrain type.
+4. A vivid, sensory description of the environment (smells, sounds, visibility).
+5. A strategic Defense Bonus (float between 0.0 and 0.8).
+Return this as a JSON object.
+`;
+
+const BATTLE_RESOLUTION_PROMPT = `
+Analyze the following turn:
+- Attacker Move: [ATK_MOVE]
+- Defender Move: [DEF_MOVE]
+- Environment: [ENV_DESC]
+
+Determine the outcome based on realistic ancient warfare tactics.
+Return a JSON object with:
+- narrative: A 2-3 sentence description of the clash.
+- atkDamage: Integer (damage to attacker).
+- defDamage: Integer (damage to defender).
+`;
+
+const BATTLE_REPORT_PROMPT = `
+Analyze the provided Battle Log history.
+Act as a senior military analyst writing an After Action Report (AAR).
+
+Battle Log:
+[BATTLE_LOGS]
+
+Return a JSON object with this exact structure:
+{
+  "winner": "Attacker" or "Defender",
+  "tacticalAnalysis": "A paragraph explaining WHY they won. Mention specific moves.",
+  "strengths": ["Point 1", "Point 2"],
+  "mistakes": ["Point 1", "Point 2"],
+  "casualties": "Estimated number of dead/wounded based on damage taken"
+}
+`;
+
+// AI Setup
+// Note: In a real deploy, use import.meta.env.VITE_GEMINI_API_KEY. 
+// For this preview, we'll try to use it if available, or fall back gracefully.
+const API_KEY = import.meta.env?.VITE_GEMINI_API_KEY || ""; 
+let genAI = null;
+let model = null;
+
+if (API_KEY) {
+  genAI = new GoogleGenerativeAI(API_KEY);
+  model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+}
+
+const cleanJSON = (text) => {
+  try {
+    const match = text.match(/\{[\s\S]*\}/);
+    return match ? JSON.parse(match[0]) : null;
+  } catch (e) { return null; }
+};
+
+// --- DATA LISTS (Offline/Fallback) ---
+const BATTLE_NAMES_A = ['The Battle of', 'The Siege of', 'The Skirmish at', 'The Massacre at'];
+const BATTLE_NAMES_B = ['Broken', 'Weeping', 'Thunder', 'Silent', 'Burning', 'Frozen', 'Shadow', 'Iron'];
+const BATTLE_NAMES_C = ['Ridge', 'Valley', 'Keep', 'River', 'Pass', 'Fields', 'Gate', 'Wall'];
+const ENVIRONMENTS = [
+  { type: 'Fortress Siege', desc: 'A massive stone stronghold looming atop a jagged hill. The air smells of sulfur.', defenseBonus: 0.4 },
+  { type: 'Narrow Canyon', desc: 'A claustrophobic pass with towering red cliffs. The wind howls through the gap.', defenseBonus: 0.2 },
+  { type: 'Open Field', desc: 'Vast, rolling grassy plains stretching to the horizon. Nowhere to hide.', defenseBonus: 0.0 },
+  { type: 'River Bridge', desc: 'A fast-flowing, icy river cuts the battlefield in half, crossed only by a single stone bridge.', defenseBonus: 0.5 },
+];
+const WEATHER = ['Clear Skies', 'Heavy Rain', 'Thick Fog', 'Scorching Sun', 'Snowstorm'];
+
+const FALLBACK_DATA = {
+  'Medieval': {
+    infantry: { name: 'Men-at-Arms', str: 'Versatile frontline fighters.', weak: 'Vulnerable to armor-piercing.', equip: 'Poleaxe & Chainmail.' },
+    ranged: { name: 'Crossbowmen', str: 'High armor penetration.', weak: 'Slow reload.', equip: 'Heavy Arbalest & Pavese Shield.' },
+    special: { name: 'Knights', str: 'Devastating shock charge.', weak: 'Muddy terrain.', equip: 'Lance & Full Plate.' }
+  },
+  'Viking': {
+    infantry: { name: 'Berserkers', str: 'Shock troops.', weak: 'No armor.', equip: 'Dane Axe & Wolf Pelt.' },
+    ranged: { name: 'Skirmishers', str: 'Mobile harassment.', weak: 'Range.', equip: 'Light Javelins & Seax.' },
+    special: { name: 'Shield Wall', str: 'Impenetrable defense.', weak: 'Flanking.', equip: 'Round Shield & Spear.' }
+  }
+};
+
+const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+// --- CORE FUNCTIONS (Integrated) ---
+
+const initializeBattle = async () => {
+  if (model) {
+    try {
+      const result = await model.generateContent(SCENARIO_GENERATION_PROMPT);
+      const data = cleanJSON(result.response.text());
+      if (data) return {
+        name: data.name,
+        env: { type: data.terrain, desc: data.description, defenseBonus: data.defenseBonus },
+        weather: data.weather,
+        day: 1
+      };
+    } catch (e) { console.warn("AI Init failed, using fallback."); }
+  }
+  const env = rand(ENVIRONMENTS);
+  return {
+    name: `${rand(BATTLE_NAMES_A)} ${rand(BATTLE_NAMES_B)} ${rand(BATTLE_NAMES_C)}`,
+    env: env,
+    weather: rand(WEATHER),
+    day: 1
+  };
+};
+
+const generateArmyData = (isPlayer) => {
+  const cultureKey = rand(Object.keys(FALLBACK_DATA));
+  const cultureData = FALLBACK_DATA[cultureKey];
+  const size = randInt(2000, 8000);
+  return {
+    name: isPlayer ? "Player Legion" : "Enemy Horde",
+    culture: cultureKey,
+    totalSize: size,
+    morale: 100,
+    supplies: 100,
+    isPlayer,
+    units: [
+      { ...cultureData.infantry, count: Math.floor(size * 0.4), type: 'Infantry' },
+      { ...cultureData.ranged, count: Math.floor(size * 0.3), type: 'Ranged' },
+      { ...cultureData.special, count: Math.floor(size * 0.2), type: 'Special' },
+      { name: 'Siege Engines', count: randInt(0, 5), type: 'Siege', str: 'Destroys fortifications.', weak: 'Defenseless in melee.', equip: 'Trebuchet.' }
+    ]
+  };
+};
+
+const resolveTurn = async (atkMove, defMove, scenario) => {
+  if (model) {
+    try {
+      let prompt = BATTLE_RESOLUTION_PROMPT
+        .replace("[ATK_MOVE]", atkMove)
+        .replace("[DEF_MOVE]", defMove)
+        .replace("[ENV_DESC]", scenario.env.desc);
+      const result = await model.generateContent(prompt);
+      const data = cleanJSON(result.response.text());
+      if (data) return { narrative: data.narrative, atkDmg: data.atkDamage || 50, defDmg: data.defDamage || 50 };
+    } catch (e) { console.warn("AI Turn failed, using fallback."); }
+  }
+  return {
+    narrative: `Tactical engagement: Attackers "${atkMove}" vs Defenders "${defMove}". The clash was chaotic.`,
+    atkDmg: Math.floor(Math.random() * 100) + 20,
+    defDmg: Math.floor(Math.random() * 100) + 20
+  };
+};
+
+const generateBattleReport = async (logs) => {
+  if (model) {
+    try {
+      const logText = logs.map(l => `${l.role}: ${l.text}`).join("\n");
+      const prompt = BATTLE_REPORT_PROMPT.replace("[BATTLE_LOGS]", logText);
+      const result = await model.generateContent(prompt);
+      return cleanJSON(result.response.text());
+    } catch (e) { console.error("AI Report Error:", e); }
+  }
+  return {
+    winner: "Undetermined",
+    tacticalAnalysis: "Communication with HQ lost. Battle concluded locally.",
+    strengths: ["Unit Cohesion", "Rapid Deployment"],
+    mistakes: ["Communications Failure", "Limited Intel"],
+    casualties: "Estimated 30%"
+  };
+};
+
+
+// --- UI COMPONENTS (The New Design) ---
+
+const PaperCard = ({ children, className = "" }) => (
+  <div className={`bg-[#F4ECD8] border border-[#D7C9AA] shadow-lg ${className}`}>
+    {children}
+  </div>
+);
+
+const InkBadge = ({ children, color = "stone" }) => {
+  const styles = {
+    stone: "text-stone-700 border-stone-400 bg-stone-200/50",
+    red: "text-red-900 border-red-800/30 bg-red-100",
+    blue: "text-blue-900 border-blue-900/30 bg-blue-100",
+    amber: "text-amber-900 border-amber-900/30 bg-amber-100",
+  };
+  return (
+    <span className={`px-2 py-0.5 text-[10px] uppercase font-bold tracking-widest border font-serif ${styles[color] || styles.stone}`}>
+      {children}
+    </span>
+  );
+};
+
+const UnitRow = ({ unit }) => {
   const [isOpen, setIsOpen] = useState(false);
   return (
-    <div className="glass-panel rounded mb-2 overflow-hidden border border-slate-700/50">
+    <div className="border-b border-[#D7C9AA] last:border-0">
       <button 
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex justify-between items-center p-3 hover:bg-white/5 transition-colors text-left"
+        className="w-full flex justify-between items-center py-3 px-3 hover:bg-[#EBE0C5] transition-colors group text-stone-800"
       >
-        <div className="flex flex-col">
-          <span className="text-slate-200 font-bold text-sm">{unit.name}</span>
-          <span className="text-xs text-slate-500">{unit.type}</span>
-        </div>
         <div className="flex items-center gap-3">
-          <span className="font-tech text-amber-200 text-sm">{unit.count}</span>
-          {isOpen ? <ChevronUp size={16} className="text-amber-500"/> : <ChevronDown size={16} className="text-slate-500"/>}
+          <div className={`w-6 h-6 flex items-center justify-center border transition-colors ${isOpen ? 'bg-amber-900 text-[#F4ECD8] border-amber-900' : 'bg-transparent border-stone-400 text-stone-500'}`}>
+            <span className="font-serif font-bold text-xs">{unit.name[0]}</span>
+          </div>
+          <div className="text-left">
+            <div className="text-sm font-bold font-serif text-stone-900">{unit.name}</div>
+            <div className="text-[10px] text-stone-500 font-mono uppercase tracking-tight">{unit.type}</div>
+          </div>
+        </div>
+        <div className="text-right">
+           <div className="text-sm font-mono font-bold text-stone-700">{unit.count.toLocaleString()}</div>
         </div>
       </button>
       
       {isOpen && (
-        <div className="p-4 bg-black/40 text-xs border-t border-slate-800 text-slate-300 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
-          <div className="grid grid-cols-[60px_1fr] gap-2">
-            <span className="text-emerald-500 font-bold uppercase tracking-wider text-[10px] self-center">Strength</span>
-            <span className="leading-relaxed">{unit.str || 'N/A'}</span>
-            <span className="text-red-500 font-bold uppercase tracking-wider text-[10px] self-center">Weakness</span>
-            <span className="leading-relaxed">{unit.weak || 'N/A'}</span>
+        <div className="bg-[#EBE0C5]/50 px-4 py-3 text-xs space-y-3 shadow-inner">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="text-[10px] text-stone-500 uppercase mb-1 font-bold">Strength</div>
+              <div className="text-stone-800 font-serif italic">"{unit.str}"</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-stone-500 uppercase mb-1 font-bold">Weakness</div>
+              <div className="text-stone-800 font-serif italic">"{unit.weak}"</div>
+            </div>
           </div>
-          <div className="pt-2 border-t border-slate-700/50">
-            <span className="text-blue-400 font-bold uppercase tracking-wider text-[10px] block mb-1">Combat Loadout</span>
-            <span className="leading-relaxed text-slate-400 italic block">{unit.equip || 'Standard Issue'}</span>
+          <div className="pt-2 border-t border-stone-300/50 mt-2">
+            <span className="text-[10px] text-stone-500 uppercase block mb-1 font-bold">Loadout</span>
+            <span className="leading-relaxed text-stone-600 italic block">{unit.equip || 'Standard Issue'}</span>
           </div>
         </div>
       )}
@@ -42,44 +296,34 @@ const UnitDropdown = ({ unit }) => {
   );
 };
 
-// --- MAIN APPLICATION ---
+// --- MAIN UI COMPONENT ---
 
 export default function BattleSimulator() {
-  // App State
-  const [phase, setPhase] = useState('menu'); // menu, lobby, battle, report
+  const [phase, setPhase] = useState('menu');
   const [mode, setMode] = useState(null);
   const [inputBuffer, setInputBuffer] = useState('');
   
-  // Multiplayer State
   const [roomCode, setRoomCode] = useState('');
   const [gameId, setGameId] = useState(null);
   const [isHost, setIsHost] = useState(false);
   const [myRole, setMyRole] = useState(null);
   
-  // Game Data
   const [gameState, setGameState] = useState(null);
-  const [reportData, setReportData] = useState(null); // Stores AI Report
+  const [reportData, setReportData] = useState(null);
   const logsEndRef = useRef(null);
 
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [gameState?.logs]);
 
-  // --- FIREBASE SYNC ---
   useEffect(() => {
     if (!gameId) return;
-
     const unsub = onSnapshot(doc(db, 'matches', gameId), (docSnapshot) => {
       if (docSnapshot.exists()) {
         const data = docSnapshot.data();
         setGameState(data);
-
-        // HOST LOGIC: Check for Turn Resolution OR Game End
         if (isHost && !data.processing) {
-            // Game Over Check
             if (data.attacker.totalSize <= 0 || data.defender.totalSize <= 0) {
                  handleGameEnd(data);
-            } 
-            // Turn Resolution Check
-            else if (data.attacker.move && data.defender.move) {
+            } else if (data.attacker.move && data.defender.move) {
                  resolveMultiplayerTurn(data);
             }
         }
@@ -88,22 +332,11 @@ export default function BattleSimulator() {
     return () => unsub();
   }, [gameId, isHost]);
 
-  // --- ACTIONS ---
-
   const handleGameEnd = async (data) => {
-      // Only run once
       if (data.status === 'finished') return;
-
       await updateDoc(doc(db, 'matches', gameId), { processing: true });
-      
-      // Generate AI Report
       const report = await generateBattleReport(data.logs);
-      
-      await updateDoc(doc(db, 'matches', gameId), {
-          status: 'finished',
-          processing: false,
-          report: report // Save report to DB so both see it
-      });
+      await updateDoc(doc(db, 'matches', gameId), { status: 'finished', processing: false, report: report });
   };
 
   const createGame = async () => {
@@ -111,16 +344,13 @@ export default function BattleSimulator() {
     const army1 = generateArmyData(true);
     const army2 = generateArmyData(true);
     const hostIsAttacker = Math.random() > 0.5;
-    const initialLogs = [{ role: 'system', text: `SECURE CHANNEL ESTABLISHED. OPERATION: "${scenario.name.toUpperCase()}"` }];
+    const initialLogs = [{ role: 'system', text: `SCRIBE RECORD STARTED: OPERATION "${scenario.name.toUpperCase()}"` }];
 
     const newGame = {
-      scenario,
-      turn: 1,
-      logs: initialLogs,
+      scenario, turn: 1, logs: initialLogs,
       attacker: { ...army1, move: null, isHost: hostIsAttacker },
       defender: { ...army2, move: null, isHost: !hostIsAttacker },
-      processing: false,
-      status: 'waiting_for_player'
+      processing: false, status: 'waiting_for_player'
     };
 
     const docRef = await addDoc(collection(db, 'matches'), newGame);
@@ -151,44 +381,33 @@ export default function BattleSimulator() {
 
   const startPvE = async () => {
     setMode('PvE');
-    // For local PvE, we simulate the DB structure in local state for simplicity
     const scenario = await initializeBattle();
     const army1 = generateArmyData(true);
     const army2 = generateArmyData(false);
     
     const startState = {
-      scenario,
-      turn: 1,
-      logs: [{ role: 'system', text: `SIMULATION: "${scenario.name.toUpperCase()}"` }],
+      scenario, turn: 1,
+      logs: [{ role: 'system', text: `SIMULATION STARTED: "${scenario.name.toUpperCase()}"` }],
       attacker: { ...army1, move: null },
       defender: { ...army2, move: null },
-      processing: false,
-      status: 'active'
+      processing: false, status: 'active'
     };
     setGameState(startState);
-    setIsHost(true); 
-    setMyRole('attacker'); 
-    setPhase('battle');
+    setIsHost(true); setMyRole('attacker'); setPhase('battle');
   };
 
   const submitMove = async () => {
     if (!inputBuffer.trim()) return;
 
     if (mode === 'PvE') {
-      // Local Logic
       const playerMove = inputBuffer;
       const aiMove = "Hold defensive line and volley fire.";
       const result = await resolveTurn(playerMove, aiMove, gameState.scenario);
       
-      const newLogs = [...gameState.logs, 
-        { role: 'player', text: `Orders: ${playerMove}` },
-        { role: 'narrator', text: result.narrative }
-      ];
-      
+      const newLogs = [...gameState.logs, { role: 'player', text: `Orders: ${playerMove}` }, { role: 'narrator', text: result.narrative }];
       const newAttacker = { ...gameState.attacker, totalSize: Math.max(0, gameState.attacker.totalSize - result.atkDmg) };
       const newDefender = { ...gameState.defender, totalSize: Math.max(0, gameState.defender.totalSize - result.defDmg) };
       
-      // Check End Game Locally
       if (newAttacker.totalSize <= 0 || newDefender.totalSize <= 0) {
          const report = await generateBattleReport(newLogs);
          setReportData(report);
@@ -196,16 +415,11 @@ export default function BattleSimulator() {
       }
 
       setGameState(prev => ({
-        ...prev,
-        logs: newLogs,
-        attacker: newAttacker,
-        defender: newDefender,
-        turn: prev.turn + 1
+        ...prev, logs: newLogs, attacker: newAttacker, defender: newDefender, turn: prev.turn + 1
       }));
       setInputBuffer('');
 
     } else {
-      // Multiplayer Logic
       const moveField = `${myRole}.move`;
       await updateDoc(doc(db, 'matches', gameId), { [moveField]: inputBuffer });
       setInputBuffer('');
@@ -216,10 +430,7 @@ export default function BattleSimulator() {
     await updateDoc(doc(db, 'matches', gameId), { processing: true });
     const result = await resolveTurn(data.attacker.move, data.defender.move, data.scenario);
     
-    const newLogs = [...data.logs, 
-      { role: 'system', text: `TURN ${data.turn} REPORT:` },
-      { role: 'narrator', text: result.narrative }
-    ];
+    const newLogs = [...data.logs, { role: 'system', text: `TURN ${data.turn} COMPLETE` }, { role: 'narrator', text: result.narrative }];
 
     await updateDoc(doc(db, 'matches', gameId), {
       logs: newLogs,
@@ -232,231 +443,82 @@ export default function BattleSimulator() {
     });
   };
 
-  // --- RENDER HELPERS ---
   const myArmy = gameState ? gameState[myRole] : null;
   const enemyArmy = gameState ? gameState[myRole === 'attacker' ? 'defender' : 'attacker'] : null;
 
-  // Watch for Finished Game in Multiplayer
   if (mode !== 'PvE' && gameState?.status === 'finished' && phase !== 'report') {
       setReportData(gameState.report);
       setPhase('report');
   }
 
-  // --- MENU ---
-  if (phase === 'menu') {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden bg-slate-950 text-white">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_#1e293b,_#020617)]"></div>
-        <div className="z-10 text-center max-w-2xl">
-          <Sword size={64} className="mx-auto text-amber-600 animate-pulse-glow mb-6" />
-          <h1 className="text-6xl font-black mb-4 text-transparent bg-clip-text bg-gradient-to-b from-amber-200 to-amber-700">WAR ROOM v3.0</h1>
-          <p className="mb-12 text-slate-400 tracking-widest uppercase border-y border-slate-800 py-2">Multiplayer Capable</p>
-          <div className="flex gap-6 justify-center">
-            <button onClick={startPvE} className="glass-panel px-8 py-4 hover:border-amber-500 transition-colors rounded-xl flex flex-col items-center gap-2 group w-48">
-              <Brain className="text-amber-500 group-hover:scale-110 transition-transform" />
-              <span className="font-bold">Solo Command</span>
-            </button>
-            <button onClick={createGame} className="glass-panel px-8 py-4 hover:border-blue-500 transition-colors rounded-xl flex flex-col items-center gap-2 group w-48">
-              <Users className="text-blue-500 group-hover:scale-110 transition-transform" />
-              <span className="font-bold">Create Lobby</span>
-            </button>
-            <div className="glass-panel px-4 py-4 rounded-xl flex flex-col items-center gap-2 w-48">
-              <input 
-                 className="bg-black/50 border border-slate-700 rounded p-1 text-center w-full font-mono text-sm"
-                 placeholder="Enter Code"
-                 onChange={(e) => setRoomCode(e.target.value)}
-              />
-              <button onClick={joinGame} className="text-xs bg-blue-900 hover:bg-blue-800 px-4 py-2 rounded font-bold w-full">JOIN</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // --- LOBBY ---
-  if (phase === 'lobby') {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white font-tech relative">
-        <button 
-          onClick={() => setPhase('menu')}
-          className="absolute top-6 left-6 flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
-        >
-          <ArrowLeft size={20}/> BACK TO MENU
-        </button>
-        <div className="glass-panel p-8 rounded-xl text-center animate-in zoom-in-95 duration-300">
-          <h2 className="text-2xl text-amber-500 mb-4 font-bold uppercase tracking-widest">Waiting for Opponent</h2>
-          <div className="bg-black/40 p-6 rounded border border-slate-700 mb-6">
-            <p className="text-slate-400 text-xs uppercase mb-2">Secure Room Code</p>
-            <div className="text-4xl font-mono text-white tracking-[0.5em] flex items-center justify-center gap-4">
-              {gameId} <Copy size={20} className="text-slate-600 cursor-pointer hover:text-white" onClick={() => navigator.clipboard.writeText(gameId)}/>
-            </div>
-          </div>
-          <div className="flex justify-center items-center gap-2 text-slate-500 animate-pulse">
-            <Activity size={16} /> <span>Scanning for connection...</span>
-          </div>
-          {gameState && gameState.status === 'active' && (
-             <button onClick={() => setPhase('battle')} className="mt-8 bg-green-600 hover:bg-green-500 text-white px-8 py-3 rounded font-bold flex items-center gap-2 mx-auto">
-               <Play size={16}/> DEPLOY NOW
-             </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // --- REPORT ---
-  if (phase === 'report') {
-      return (
-        <div className="min-h-screen bg-slate-950 text-slate-200 p-8 flex flex-col items-center justify-center">
-            <div className="max-w-2xl w-full glass-panel p-8 rounded-xl">
-                <header className="border-b border-slate-700 pb-4 mb-6 text-center">
-                    <FileText size={48} className="mx-auto text-amber-500 mb-2"/>
-                    <h2 className="text-3xl font-serif font-bold text-white uppercase tracking-widest">After Action Report</h2>
-                    <p className="text-slate-500">Operation: {gameState?.scenario?.name}</p>
-                </header>
-                
-                {reportData ? (
-                    <div className="space-y-6">
-                        <div className="bg-black/40 p-4 rounded border border-slate-700">
-                            <h3 className="text-amber-500 font-bold uppercase text-xs tracking-wider mb-2">Tactical Analysis</h3>
-                            <p className="leading-relaxed text-slate-300">{reportData.tacticalAnalysis}</p>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="bg-emerald-950/20 p-4 rounded border border-emerald-900/50">
-                                <h3 className="text-emerald-500 font-bold uppercase text-xs tracking-wider mb-2">Key Strengths</h3>
-                                <ul className="list-disc list-inside text-sm text-slate-400">
-                                    {reportData.strengths?.map((s, i) => <li key={i}>{s}</li>)}
-                                </ul>
-                            </div>
-                            <div className="bg-red-950/20 p-4 rounded border border-red-900/50">
-                                <h3 className="text-red-500 font-bold uppercase text-xs tracking-wider mb-2">Critical Mistakes</h3>
-                                <ul className="list-disc list-inside text-sm text-slate-400">
-                                    {reportData.mistakes?.map((s, i) => <li key={i}>{s}</li>)}
-                                </ul>
-                            </div>
-                        </div>
-                        <div className="text-center pt-4 border-t border-slate-700">
-                            <p className="text-xs text-slate-500 uppercase">Estimated Casualties</p>
-                            <p className="text-xl font-mono text-red-400">{reportData.casualties}</p>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="text-center py-12 animate-pulse">
-                        <Activity className="mx-auto mb-4 text-blue-500"/>
-                        <p>Compiling Battle Data...</p>
-                    </div>
-                )}
-
-                <button onClick={() => setPhase('menu')} className="w-full mt-8 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded font-bold uppercase">
-                    Return to War Room
-                </button>
-            </div>
-        </div>
-      );
-  }
-
-  // --- BATTLE ---
   const iHaveMoved = gameState?.[myRole]?.move !== null;
   const isWaitingForEnemy = iHaveMoved && gameState?.[myRole === 'attacker' ? 'defender' : 'attacker']?.move === null;
   const isProcessing = gameState?.processing;
 
   return (
-    <div className="h-screen flex flex-col md:flex-row overflow-hidden bg-slate-950 text-slate-200">
-      {/* Left: Terminal */}
-      <div className="flex-1 flex flex-col p-4 relative z-10 bg-black/20 backdrop-blur-sm">
-        <header className="mb-4 flex justify-between items-center border-b border-slate-800 pb-2">
-          <div className="flex items-center gap-2 text-amber-500 font-bold">
-            <Activity size={20}/> <span>{gameState?.scenario?.name.toUpperCase()}</span>
-          </div>
-          <button 
-            onClick={() => { if(window.confirm("Abort Battle?")) setPhase('menu'); }} 
-            className="text-xs text-red-400 hover:text-red-300 uppercase flex items-center gap-1"
-          >
-            <AlertTriangle size={12}/> Abort
-          </button>
-        </header>
+    <>
+    <GlobalStyles />
+    <div className="h-screen w-full bg-[#E6DFCD] text-stone-800 font-sans flex flex-col overflow-hidden">
+      <div className="absolute inset-0 opacity-20 pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/aged-paper.png')]"></div>
 
-        <div className="flex-1 overflow-y-auto space-y-4 pr-2 scrollbar-thin">
-          {gameState?.logs?.map((log, i) => (
-            <div key={i} className={`p-3 rounded border-l-2 ${
-              log.role === 'system' ? 'border-amber-600 bg-amber-950/20 text-amber-100' :
-              log.role === 'narrator' ? 'border-indigo-500 bg-slate-900/50 text-slate-300 italic' :
-              log.role === 'player' ? 'border-slate-500 bg-slate-800/30 text-slate-400' :
-              'border-slate-600 bg-slate-800/40'
-            }`}>
-              {log.text}
-            </div>
-          ))}
-          <div ref={logsEndRef} />
-        </div>
-
-        <div className="mt-4 glass-panel p-4 rounded-xl relative">
-          {isProcessing ? (
-             <div className="absolute inset-0 bg-black/60 z-10 flex items-center justify-center text-amber-500 font-tech">
-               Running Combat Simulations...
-             </div>
-          ) : isWaitingForEnemy ? (
-             <div className="absolute inset-0 bg-black/60 z-10 flex items-center justify-center text-blue-400 font-tech animate-pulse">
-               Orders Encrypted. Awaiting Enemy Transmission...
-             </div>
-          ) : null}
-
-          <div className="flex gap-3">
-             <span className="text-amber-500 pt-2 font-mono text-xl">{'>'}</span>
-             <textarea 
-                value={inputBuffer}
-                onChange={(e) => setInputBuffer(e.target.value)}
-                onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitMove(); }}}
-                className="w-full bg-transparent focus:outline-none resize-none h-16 font-tech"
-                placeholder="Enter tactical orders..."
-                disabled={iHaveMoved || isProcessing}
-             />
-             <button 
-               onClick={submitMove} 
-               disabled={iHaveMoved || isProcessing}
-               className={`px-6 rounded font-bold uppercase text-sm ${iHaveMoved ? 'bg-slate-700 text-slate-500' : 'bg-amber-700 hover:bg-amber-600 text-white'}`}
-             >
-               SEND
-             </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Right: Intel */}
-      <div className="w-full md:w-[400px] glass-panel border-l border-slate-700 p-6 flex flex-col overflow-y-auto">
-        <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Tactical Data</h2>
-        
-        {/* Environment */}
-        <div className="glass-panel p-4 rounded-xl mb-6">
-          <h3 className="text-blue-400 font-bold flex items-center gap-2 mb-2"><MapIcon size={18}/> {gameState?.scenario?.env.type}</h3>
-          <p className="text-sm text-slate-400 italic mb-2">{gameState?.scenario?.env.desc}</p>
-          <span className="text-xs bg-slate-800 px-2 py-1 rounded text-slate-300">{gameState?.scenario?.weather}</span>
-        </div>
-
-        {/* Units */}
-        <div className="space-y-4">
-           {myArmy && (
-             <div className="glass-panel p-4 rounded-xl border border-emerald-500/30">
-               <h3 className="font-bold text-emerald-400 mb-2 flex items-center gap-2"><Shield size={16}/> Your Forces ({myRole})</h3>
-               <div className="text-sm text-slate-300 grid grid-cols-2 mb-2 font-tech">
-                 <span>Troops: {myArmy.totalSize}</span>
-                 <span>Morale: {myArmy.morale}%</span>
-               </div>
-               {myArmy.units.map((u, i) => <UnitDropdown key={i} unit={u} />)}
-             </div>
-           )}
-           {enemyArmy && (
-              <div className="glass-panel p-4 rounded-xl border border-red-500/30 opacity-75">
-                <h3 className="font-bold text-red-400 mb-2 flex items-center gap-2"><Users size={16}/> Enemy Forces</h3>
-                <div className="text-sm text-slate-300 grid grid-cols-2 mb-2 font-tech">
-                 <span>Est. Troops: {enemyArmy.totalSize > 0 ? "Detected" : "Eliminated"}</span>
-                 <span>Morale: {enemyArmy.morale > 0 ? "Active" : "Broken"}</span>
+      {phase === 'menu' && (
+        <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-[#E6DFCD] relative overflow-hidden z-10">
+            <div className="max-w-2xl w-full text-center space-y-12 border-y-4 border-double border-stone-800/20 py-16">
+              <div className="space-y-4">
+                <div className="flex justify-center mb-6">
+                  <Sword size={64} className="text-stone-800 drop-shadow-sm" />
+                </div>
+                <h1 className="text-6xl font-black tracking-tight text-stone-900 font-serif">WAR ROOM</h1>
+                <p className="text-stone-600 uppercase tracking-[0.4em] text-xs font-bold">Tactical Command & History</p>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-2xl mx-auto">
+                <button onClick={startPvE} className="group flex flex-col items-center gap-3 p-6 bg-[#F4ECD8] border-2 border-stone-800 hover:bg-stone-800 hover:text-[#F4ECD8] transition-all shadow-[4px_4px_0px_rgba(44,44,44,1)] hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px]">
+                  <Brain size={24} className="text-amber-700 group-hover:text-[#F4ECD8] transition-colors" />
+                  <div className="text-center"><div className="font-bold font-serif uppercase tracking-widest text-sm">Campaign</div></div>
+                </button>
+                <button onClick={createGame} className="group flex flex-col items-center gap-3 p-6 bg-[#F4ECD8] border-2 border-stone-800 hover:bg-stone-800 hover:text-[#F4ECD8] transition-all shadow-[4px_4px_0px_rgba(44,44,44,1)] hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px]">
+                  <Users size={24} className="text-blue-800 group-hover:text-[#F4ECD8] transition-colors" />
+                  <div className="text-center"><div className="font-bold font-serif uppercase tracking-widest text-sm">Multiplayer</div></div>
+                </button>
+                <div className="flex flex-col gap-2">
+                   <input className="bg-[#F4ECD8] border-2 border-stone-400 p-2 text-center w-full font-mono text-sm placeholder-stone-400 focus:border-stone-800 focus:outline-none" placeholder="Room Code" onChange={(e) => setRoomCode(e.target.value)} />
+                   <button onClick={joinGame} className="text-xs bg-stone-800 hover:bg-stone-700 text-[#F4ECD8] px-4 py-2 font-bold w-full uppercase tracking-widest">JOIN</button>
                 </div>
               </div>
-           )}
+            </div>
         </div>
-      </div>
-    </div>
-  );
-}
+      )}
+
+      {phase === 'lobby' && (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-[#E6DFCD] p-6 relative z-10">
+           <button onClick={() => setPhase('menu')} className="absolute top-8 left-8 flex items-center gap-2 text-stone-600 hover:text-stone-900 transition-colors text-xs font-bold uppercase tracking-widest z-10">
+              <ArrowLeft size={16}/> Retreat
+           </button>
+            <PaperCard className="w-full max-w-md p-10 relative">
+              <div className="absolute -top-4 -right-4 w-12 h-12 bg-red-800 rounded-full flex items-center justify-center shadow-lg text-[#F4ECD8] text-[8px] font-bold border-2 border-red-900/50">TOP<br/>SECRET</div>
+              <div className="text-center mb-8">
+                <h2 className="text-2xl font-bold text-stone-900 font-serif mb-2">Battle Summons</h2>
+                <div className="h-px w-16 bg-stone-400 mx-auto my-4"></div>
+                <p className="text-stone-600 text-sm italic font-serif">"Transmit this cipher to your adversary."</p>
+              </div>
+              <div className="bg-stone-200 border-2 border-dashed border-stone-400 p-6 mb-8 flex items-center justify-between group cursor-pointer hover:bg-stone-300 transition-colors">
+                <div className="text-3xl font-mono text-stone-800 font-bold tracking-widest">{gameId}</div>
+                <Copy size={20} className="text-stone-500 group-hover:text-stone-800 transition-colors" onClick={() => navigator.clipboard.writeText(gameId)}/>
+              </div>
+              <div className="space-y-3 mb-8">
+                <div className="flex items-center justify-between text-sm p-2 border-b border-stone-300"><span className="text-stone-500 font-serif italic">Command Status</span><InkBadge color="stone">Standing By</InkBadge></div>
+                <div className="flex items-center justify-between text-sm p-2 border-b border-stone-300">
+                   <span className="text-stone-500 font-serif italic">Adversary</span>
+                   {gameState?.status === 'active' ? <InkBadge color="amber">Connected</InkBadge> : <span className="text-stone-400 text-xs uppercase tracking-wide flex items-center gap-2"><Clock size={12} className="animate-spin"/> Awaiting Connection...</span>}
+                </div>
+              </div>
+              {gameState && gameState.status === 'active' && <button onClick={() => setPhase('battle')} className="w-full bg-stone-800 text-[#F4ECD8] py-4 font-bold uppercase tracking-widest hover:bg-stone-700 transition-colors shadow-lg border border-stone-600 animate-pulse">Commence Battle</button>}
+            </PaperCard>
+        </div>
+      )}
+
+      {phase === 'report' && (
+        <div className="min-h-screen bg-[#E6DFCD] flex flex-col items-center justify-center p-6 relative z-10">
+            <PaperCard className="max-w-3xl w-full p-12 relative">
+                <div className="absolute top-8 right-8 w-20 h-20 bg-red-800 rounded-full flex items-center justify-center shadow-lg border-4 border-red-900/40 text-red-100 font-serif font-bold text-xs text-center leading-tight opacity-9

@@ -1,60 +1,43 @@
-/* --- BATTLE SIMULATOR THEME --- */
+/* --- BATTLE SIMULATOR THEME: ANCIENT WAR ROOM --- */
+/* Most styles are handled via Tailwind classes in the JSX */
+
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Lora:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap');
 
 :root {
-  /* Core Colors */
-  --color-bg-dark: #020617;   /* Slate 950 */
-  --color-bg-panel: rgba(0, 0, 0, 0.4);
-  --color-border: rgba(30, 41, 59, 0.5); /* Slate 800 */
-  
-  /* Text Colors */
-  --color-text-main: #e2e8f0; /* Slate 200 */
-  --color-text-muted: #64748b; /* Slate 500 */
-  
-  /* Accents */
-  --color-primary: #d97706;   /* Amber 600 (Gold) */
-  --color-primary-glow: rgba(217, 119, 6, 0.2);
-  
-  --color-danger: #dc2626;    /* Red 600 */
-  --color-danger-glow: rgba(220, 38, 38, 0.2);
-  
-  --color-safe: #10b981;      /* Emerald 500 */
-  
-  /* Fonts */
-  --font-display: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-  --font-tech: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-serif: 'Lora', serif;
+  --font-display: 'Cinzel', serif;
+  --font-mono: 'JetBrains Mono', monospace;
 }
 
-/* Base Styles */
 body {
-  margin: 0;
-  background-color: var(--color-bg-dark);
-  color: var(--color-text-main);
-  font-family: var(--font-body);
+  background-color: #E6DFCD;
+  color: #292524; /* stone-800 */
 }
 
-/* Utility Classes for "Glass" Effect */
-.glass-panel {
-  background-color: var(--color-bg-panel);
-  border: 1px solid var(--color-border);
-  backdrop-filter: blur(12px);
+/* Custom Scrollbar for the "Ancient" feel */
+::-webkit-scrollbar {
+  width: 8px;
 }
 
-/* Typography Overrides */
-h1, h2, h3 {
-  font-family: var(--font-display);
+::-webkit-scrollbar-track {
+  background: #E6DFCD;
 }
 
-.font-tech {
-  font-family: var(--font-tech);
+::-webkit-scrollbar-thumb {
+  background: #D7C9AA;
+  border-radius: 4px;
 }
 
-/* Animations */
-@keyframes pulse-glow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+::-webkit-scrollbar-thumb:hover {
+  background: #A8A29E;
 }
 
-.animate-pulse-glow {
-  animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+/* Animation Utilities */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-in {
+  animation: fadeIn 0.5s ease-out forwards;
 }
